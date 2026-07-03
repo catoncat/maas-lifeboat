@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from . import config
 from .errors import anthropic_error_response, check_client_auth, openai_error_response, require_provider_key
 from .logging import append_jsonl, attempt_to_log, console_log, sha16, utc_now
+from .pressure import AccountPressureGate
 from .protocols import anthropic_response_to_openai, openai_response_to_anthropic
 from .strategy import MaasGateway, attempt_interfaces
 from .types import PreparedStreamFailure
@@ -23,6 +24,7 @@ def make_app() -> FastAPI:
     proxy = config.PROXY_URL or None
     client = httpx.AsyncClient(proxy=proxy, trust_env=not bool(proxy))
     gateway = MaasGateway(client)
+    pressure_gate = AccountPressureGate(config.MAX_INFLIGHT_REQUESTS, config.BUSY_COOLDOWN_S)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -65,8 +67,15 @@ def make_app() -> FastAPI:
             request_id = str(uuid.uuid4())
             started = time.perf_counter()
             console_log(f"request start id={request_id} surface=openai stream=true payload={sha16(payload)} max_attempts={len(attempt_interfaces('openai'))}")
-            prepared = await gateway.prepare_stream_strategy("openai", payload, request_id)
+            permit = await pressure_gate.acquire(request_id, "openai")
+            try:
+                prepared = await gateway.prepare_stream_strategy("openai", payload, request_id)
+            except Exception:
+                permit.release()
+                raise
             if isinstance(prepared, PreparedStreamFailure):
+                pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
+                permit.release()
                 console_log(f"request end id={request_id} surface=openai stream=true ok=false attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                 append_jsonl(
                     config.LEDGER,
@@ -88,6 +97,8 @@ def make_app() -> FastAPI:
                     async for chunk in prepared.chunks:
                         yield chunk
                 finally:
+                    pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
+                    permit.release()
                     ok = any(a.ok for a in prepared.attempts)
                     console_log(f"request end id={request_id} surface=openai stream=true ok={str(ok).lower()} attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                     append_jsonl(
@@ -109,7 +120,9 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         started = time.perf_counter()
         console_log(f"request start id={request_id} surface=openai stream=false payload={sha16(payload)} max_attempts={len(attempt_interfaces('openai'))}")
-        final, attempts = await gateway.run_strategy("openai", payload, request_id)
+        async with await pressure_gate.acquire(request_id, "openai"):
+            final, attempts = await gateway.run_strategy("openai", payload, request_id)
+            pressure_gate.observe_attempts(request_id, "openai", attempts)
         success = final.ok and isinstance(final.response_json, dict)
         append_jsonl(
             config.LEDGER,
@@ -139,8 +152,15 @@ def make_app() -> FastAPI:
             request_id = str(uuid.uuid4())
             started = time.perf_counter()
             console_log(f"request start id={request_id} surface=anthropic stream=true payload={sha16(payload)} max_attempts={len(attempt_interfaces('anthropic'))}")
-            prepared = await gateway.prepare_stream_strategy("anthropic", payload, request_id)
+            permit = await pressure_gate.acquire(request_id, "anthropic")
+            try:
+                prepared = await gateway.prepare_stream_strategy("anthropic", payload, request_id)
+            except Exception:
+                permit.release()
+                raise
             if isinstance(prepared, PreparedStreamFailure):
+                pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
+                permit.release()
                 console_log(f"request end id={request_id} surface=anthropic stream=true ok=false attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                 append_jsonl(
                     config.LEDGER,
@@ -162,6 +182,8 @@ def make_app() -> FastAPI:
                     async for chunk in prepared.chunks:
                         yield chunk
                 finally:
+                    pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
+                    permit.release()
                     ok = any(a.ok for a in prepared.attempts)
                     console_log(f"request end id={request_id} surface=anthropic stream=true ok={str(ok).lower()} attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                     append_jsonl(
@@ -183,7 +205,9 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         started = time.perf_counter()
         console_log(f"request start id={request_id} surface=anthropic stream=false payload={sha16(payload)} max_attempts={len(attempt_interfaces('anthropic'))}")
-        final, attempts = await gateway.run_strategy("anthropic", payload, request_id)
+        async with await pressure_gate.acquire(request_id, "anthropic"):
+            final, attempts = await gateway.run_strategy("anthropic", payload, request_id)
+            pressure_gate.observe_attempts(request_id, "anthropic", attempts)
         success = final.ok and isinstance(final.response_json, dict)
         append_jsonl(
             config.LEDGER,

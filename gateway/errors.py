@@ -42,13 +42,24 @@ def gateway_error_message(final: AttemptResult | None, attempts: list[AttemptRes
     return f"{status} service_unavailable: MAAS gateway exhausted {attempt_count} backend attempts; last interface={final.interface}; code={code}; message={message}"
 
 
+def all_busy(attempts: list[AttemptResult]) -> bool:
+    return bool(attempts) and all(not attempt.ok and str(attempt.error_code) == "10310" for attempt in attempts)
+
+
+def retry_after_header(status: int, attempts: list[AttemptResult]) -> dict[str, str] | None:
+    if status not in {429, 503, 529}:
+        return None
+    retry_after = config.ALL_BUSY_RETRY_AFTER_S if all_busy(attempts) else 1
+    return {"Retry-After": str(retry_after)}
+
+
 def openai_error_response(final: AttemptResult | None, attempts: list[AttemptResult]) -> JSONResponse:
     status = final.status_code if final and final.status_code and final.status_code >= 400 else 503
     if final and retryable(final):
         status = 503
     return JSONResponse(
         status_code=status,
-        headers={"Retry-After": "1"} if status in {429, 503} else None,
+        headers=retry_after_header(status, attempts),
         content={
             "error": {
                 "message": gateway_error_message(final, attempts),
@@ -63,7 +74,7 @@ def anthropic_error_response(final: AttemptResult | None, attempts: list[Attempt
     status = 529 if final and retryable(final) else final.status_code if final and final.status_code and final.status_code >= 400 else 529
     return JSONResponse(
         status_code=status,
-        headers={"Retry-After": "1"} if status in {429, 503, 529} else None,
+        headers=retry_after_header(status, attempts),
         content={
             "type": "error",
             "error": {

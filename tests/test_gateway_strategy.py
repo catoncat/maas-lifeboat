@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from gateway import config
 from gateway.app import make_app
+from gateway.pressure import AccountPressureGate
 from gateway.protocols import (
     anthropic_response_to_openai,
     anthropic_to_openai,
@@ -235,6 +236,37 @@ def test_default_attempt_plan_is_warm_five_step_fallback(monkeypatch):
     assert attempt_interfaces("anthropic") == ["anthropic", "anthropic", "openai", "anthropic", "openai"]
 
 
+def test_account_pressure_gate_serializes_requests():
+    async def scenario():
+        gate = AccountPressureGate(1)
+        first = await gate.acquire("req-1", "openai")
+        second_task = asyncio.create_task(gate.acquire("req-2", "openai"))
+        await asyncio.sleep(0)
+        assert not second_task.done()
+        first.release()
+        second = await asyncio.wait_for(second_task, timeout=0.5)
+        second.release()
+
+    run(scenario())
+
+
+def test_account_pressure_gate_cools_down_after_all_busy():
+    async def scenario():
+        gate = AccountPressureGate(1, busy_cooldown_s=0.02)
+        gate.observe_attempts(
+            "req-1",
+            "openai",
+            [AttemptResult("openai", False, 503, 0.1, error_code=10310), AttemptResult("anthropic", False, 503, 0.1, error_code=10310)],
+        )
+        permit = await gate.acquire("req-2", "openai")
+        try:
+            assert permit.waited_s >= 0.01
+        finally:
+            permit.release()
+
+    run(scenario())
+
+
 def test_stream_retries_before_first_chunk(monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "test-key")
     monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
@@ -420,6 +452,7 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
     monkeypatch.setattr(config, "API_KEY", "provider-key:secret")
     monkeypatch.setattr(config, "CLIENT_API_KEY", "client-key")
     monkeypatch.setattr(config, "LEDGER", tmp_path / "gateway_requests.jsonl")
+    monkeypatch.setattr(config, "ALL_BUSY_RETRY_AFTER_S", 3)
 
     async def fail_prepare(self, native, payload, request_id=None):
         attempts = [
@@ -439,6 +472,7 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
         )
 
     assert response.status_code == 503
+    assert response.headers["Retry-After"] == "3"
     body = response.json()
     assert body["error"]["type"] == "server_error"
     assert body["error"]["code"] == "service_unavailable"
