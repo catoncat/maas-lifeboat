@@ -1,0 +1,27 @@
+experiments/replay_strategies.py
+  s_67920a8fb1ac4b::t_faa0eab91c00f1 223,225,230-237,239-240,267-323,477-478,490
+README.en.md
+  s_67920a8fb1ac4b::t_e5b08b5a80d5e0 48-49
+docs/results/maas-strategy-replay-2026-07-04.md
+  s_67920a8fb1ac4b::t_200bb162e1ae4f 17-37,87
+README.md
+  s_67920a8fb1ac4b::t_c613b59c82a9a7 96,101
+docs/strategy-optimization-plan.md
+  s_67920a8fb1ac4b::t_c613b59c82a9a7 40,79,93,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1d04b88f0be62dd136ea0bc10faf254cc0f8e887",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
