@@ -1,0 +1,16 @@
+.env.local
+.env.*.local
+logs/
+work/
+outputs/
+assets/readme-banner/
+build/
+dist/
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.DS_Store
