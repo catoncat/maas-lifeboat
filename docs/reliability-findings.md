@@ -1,108 +1,172 @@
-# 可靠性实验结论
+# Reliability findings
 
-本文记录 MAAS Lifeboat 目前能被证据支持的可靠性结论。原始 ledger 留在本地 `logs/`，不提交；公开文档只保留聚合数字和不含敏感端点的 route 描述。
+MAAS Lifeboat is a mitigation for an intermittently busy upstream provider, not a proof that the provider is highly available.
 
-## 一句话结论
+## Latest controlled probe
 
-当前行为最像 **上游账号/模型池/provider 容量瞬时饱和**，不像本地 gateway bug，也不像某一个协议面彻底坏掉。
+Date: 2026-07-04 Asia/Shanghai (2026-07-03 UTC)
 
-网关能通过串行重试、跨接口 fallback、stream 首包保护和可重试错误显著改善可用性；但如果上游容量池正在 busy，它不能保证接近 100% 成功。
+Test shape:
 
-## 关键数据
+- Short prompt: ask for a tiny `OK` reply.
+- Low `max_tokens`.
+- Mostly non-streaming requests, because the first question was provider acceptance/rejection rather than long generation quality.
+- Request-level routing only. No system proxy settings were changed.
+- Default concurrency no higher than 2.
+- Raw ledgers were written under `logs/` and are intentionally git-ignored.
+- Shareable aggregate: [`docs/results/maas-probe-2026-07-04.md`](results/maas-probe-2026-07-04.md).
 
-| 数据来源 | 样本 | 首次 attempt 成功 | 最终请求成功 | 后端 attempts | 关键现象 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| PI-agent console excerpt，2026-07-04 | 15 个有 `request end` 的 streaming 请求 | 7/16 | 14/15 | 36 | 1 个请求 7/7 全部 `503/10310`，随后客户端重试成功 |
-| 本地 gateway JSONL ledger | 15 个 streaming 请求 | 6/15 | 15/15 | 39 | 9/15 需要至少一次后端重试；延迟 1.604s-16.937s |
-| 早期 OpenAI 单接口探测 | 53 次请求 | 未单独统计 | 33/53 = 62.3% | 53 | 单接口成功率明显不稳定 |
-| 早期 Anthropic 单接口探测 | 50 次请求 | 未单独统计 | 29/50 = 58.0% | 50 | 与 OpenAI 接口同量级 |
-| 早期 HTTP proxy route 探测 | 104 次请求 | 未单独统计 | 63/104 = 60.6% | 104 | 没看到“换路由就稳定”的证据 |
+Probe scripts:
 
-这些样本不够大，不能当通用 benchmark。它们能支持的是机制判断：失败不是一个简单的本地 bug，也不是某一个协议面永久不可用。
-
-## 结论表
-
-| 问题 | 当前判断 | 证据 |
-| --- | --- | --- |
-| 主要错误 | HTTP `503` + provider code `10310` + `The system is busy, please try again later.` | 多份 gateway/PI 日志一致 |
-| OpenAI vs Anthropic | 两者都可能成功，也都可能 busy | PI excerpt 中两个接口在同一请求窗口都返回 `10310` |
-| 跨接口 fallback | 有帮助，但不是独立 provider failover | 本地 ledger 中 Anthropic fallback 救回多次请求；但也出现 Anthropic busy |
-| 7 次串行 | 有实际收益，但不是成功保证 | PI excerpt 中出现 7/7 全 busy；本地 ledger 中 15/15 成功但用了 39 attempts |
-| route/proxy | 暂无强证据证明能稳定修复 | 早期 HTTP proxy route 成功率仍约 60.6% |
-| rate limit | 未见干净 `429` 或固定 RPM 阈值 | 失败形态是 `503` busy，不是 rate-limit envelope |
-| streaming 卡顿 | HTTP `200` 和客户端可见输出不是同一事件 | 日志中部分请求很快拿到 `200`，但总 stream 持续数十秒 |
-
-## 证据边界
-
-| 还不能证明的事 | 当前处理 |
-| --- | --- |
-| 到底是账号级、模型池级还是 provider 全局拥塞 | 只能判断更像上游容量问题；不能精确归因 |
-| route/IP/proxy 是否能提升成功率 | 需要 paired route test；当前不把 proxy 当主解法 |
-| 精确 rate limit / 并发阈值 | 先按保守策略运行：账号级 1 最稳，2 可用但风险上升 |
-| delayed hedging 是否值得 | 暂不默认开启；未来如实现必须 delayed + budgeted |
-| 大 token / 长上下文场景 | 当前结论主要来自短请求和真实 PI streaming 样本 |
-
-## PI-agent streaming readback
-
-### 终端 console 样本
-
-附件中的 PI/gateway console log 展示了一个关键失败模式：
-
-```text
-openai 503 -> openai 503 -> anthropic 503 -> openai 503 -> anthropic 503 -> openai 503 -> anthropic 503
+```bash
+python3 experiments/probe_maas.py --interfaces openai --repeat 20 --rate-interval 0.75 --concurrency 1 --route-label direct
+python3 experiments/probe_maas.py --interfaces anthropic --repeat 20 --rate-interval 0.75 --concurrency 1 --route-label direct
+python3 experiments/probe_maas.py --interfaces both --pattern paired --repeat 20 --rate-interval 0.35 --concurrency 1 --route-label direct
+python3 experiments/probe_maas.py --interfaces both --repeat 10 --rate-interval 0.75 --concurrency 1 --route-label proxy-http --proxy-env MAAS_PROXY_URL
+python3 experiments/probe_maas.py --interfaces both --repeat 10 --rate-interval 0.2 --concurrency 2 --route-label direct
+python3 experiments/probe_maas.py --interfaces both --repeat 3 --stream --rate-interval 1.0 --concurrency 1 --route-label direct
 ```
 
-这说明两个协议面不能被当作完全独立的 provider。更重要的是：该请求失败后，客户端立即重试同一对话，下一次 first attempt 成功。这就是为什么 gateway 最终失败时必须返回标准可重试错误，而不是把流里塞一个非标准 error chunk。
+## Results summary
 
-### 本地 gateway ledger 样本
+Backend attempt totals across the new probe plus the local PI gateway ledger:
 
-后续本地 JSONL ledger 的 15 个 streaming 请求全部最终成功，但需要 39 次后端 attempts。这个样本比 console excerpt 健康，但仍然显示 first-attempt reliability 很差：只有 6/15 第一次成功。
+- 185 backend attempts.
+- 96 succeeded.
+- 89 failed as HTTP `503` with provider code `10310`.
+- No distinct credential, schema, quota, or hard rate-limit error appeared in this sample.
 
-## 策略演进
+Direct non-streaming probe only:
 
-最早策略是：
+| Condition | Success | `503/10310` | Notes |
+| --- | ---: | ---: | --- |
+| Direct, concurrency 1, OpenAI | 23/50 | 27/50 | Includes baseline, paired, and follow-up windows. |
+| Direct, concurrency 1, Anthropic | 27/50 | 23/50 | Strong time-window variation; one 20/20 baseline was followed by a 4/20 paired window. |
+| Direct, concurrency 2, both interfaces | 9/20 | 11/20 | Same error shape, no new rate-limit error. |
+| HTTP proxy route, concurrency 1, both interfaces | 16/20 | 4/20 | Better in that short window, but the group ended with four consecutive `503/10310`; this is not proof that proxy/IP fixes the issue. |
+| Direct streaming, concurrency 1, both interfaces | 6/6 | 0/6 | First chunk latency was 0.53-0.99s for successful short streams. |
+
+Same-window paired direct probe:
+
+| Outcome | Count |
+| --- | ---: |
+| OpenAI ok / Anthropic ok | 2 |
+| OpenAI ok / Anthropic fail | 7 |
+| OpenAI fail / Anthropic ok | 2 |
+| OpenAI fail / Anthropic fail | 9 |
+
+Interpretation: the two interface faces are not independent. Cross-interface fallback can help when only one face fails, but nearly half of the paired windows had both faces fail. The failure is bursty and time-correlated.
+
+## PI gateway evidence
+
+The PI terminal attachment showed real streaming client behavior:
+
+- 17 request starts were visible in the pasted terminal segment.
+- 15 request ends were visible and parseable: 14 successes and 1 all-attempt failure.
+- 36 backend attempts were parseable: 22 failed as `503/10310`, 14 succeeded.
+- One request exhausted the 7-attempt sequence with only `503/10310`.
+- Several later requests succeeded after 2-5 attempts.
+- Some successful streams took 35-53s end-to-end even though backend first accepted the request in roughly 1-6s. That points to long stream duration and/or client-side consumption/buffering after acceptance, not just retry delay.
+
+This is why a single successful retry cannot justify a "ready" conclusion.
+
+## Answers to the reliability questions
+
+### 1. What is the likely failure mechanism?
+
+Best current explanation: short-term provider capacity or account/model scheduling saturation exposed as `503/10310`. The evidence is:
+
+- The dominant error is a provider busy code, not auth failure, invalid model, malformed request, or context limit.
+- Failures occur in bursts and can clear seconds later.
+- Both OpenAI-compatible and Anthropic-compatible faces can fail with the same provider code.
+- A single route can show both long success streaks and immediate all-busy streaks.
+
+Uncertainty: the sample cannot separate global provider saturation from account/model pool saturation. It also cannot rule out route/IP effects because the proxy sample was small and not randomized.
+
+### 2. Are OpenAI and Anthropic endpoint failures independent?
+
+No. They are partially independent at best. In 20 same-window direct pairs, 9 pairs had both faces fail, 7 had only Anthropic fail, 2 had only OpenAI fail, and 2 had both succeed.
+
+One-shot cross-interface fallback would have succeeded in 11/20 paired windows. It improves odds over a single face in mixed windows, but it does not bypass shared provider capacity during both-fail bursts.
+
+### 3. Does route/IP/proxy change success rate?
+
+Maybe, but not proven. The HTTP proxy route sample got 16/20 successes while adjacent direct windows were worse. However:
+
+- The proxy group ended with four consecutive `503/10310`.
+- The experiment was not randomized across routes.
+- The provider state changed minute by minute.
+- Confidence intervals are wide at N=20.
+
+Conclusion: request-level route can be kept as an operational variable, but it should not be presented as a fix. Do not spend the main effort comparing proxy implementations or ports until larger randomized route samples are worth the cost.
+
+### 4. Is there an observable rate limit or concurrency threshold?
+
+No explicit rate-limit error appeared. The provider returned the same `503/10310` at concurrency 1 and 2.
+
+Current safe operational envelope:
+
+- Start rate: about 1 request/sec or slower for routine probing.
+- Client concurrency: keep new backend request concurrency at 1-2.
+- Long streaming calls: treat each accepted stream as occupying provider/client capacity until the stream ends. A stream that took 50s end-to-end can overlap with many later attempts even if its first backend acceptance was fast.
+
+Short concurrency 3 probes were intentionally skipped because concurrency 2 already reproduced the same busy bursts and no new threshold signal was needed.
+
+### 5. Is 7-attempt serial retry reasonable?
+
+7 attempts can improve chance of success, but it should not be the default conclusion.
+
+Offline simulation over independent single-attempt samples estimated:
+
+| Serial budget | Estimated success | Mean attempts |
+| --- | ---: | ---: |
+| 1 | 75/140 (53.6%) | 1.00 |
+| 2 | 97/139 (69.8%) | 1.47 |
+| 3 | 107/138 (77.5%) | 1.77 |
+| 5 | 120/136 (88.2%) | 2.15 |
+| 7 | 128/134 (95.5%) | 2.37 |
+
+This simulation is optimistic because it replays nearby real attempts as if they were retry slots. It is still useful directionally: more attempts help, but shared busy bursts mean 7 can still fully fail.
+
+The gateway default is now:
 
 ```text
-native -> same-interface retry -> alternate-interface fallback
+native -> native -> alternate -> native -> alternate
 ```
 
-这个策略在 12 次小样本里看起来可用，但真实 PI usage 很快暴露了三次都 busy 的情况：
+with mild backoff and jitter. Use `MAAS_MAX_BACKEND_ATTEMPTS=7` only for high-value interactive calls where extra latency and provider load are acceptable.
 
-```text
-openai 503 -> openai 503 -> anthropic 503
-```
+Recommended gateway algorithm:
 
-当前默认改为更保守的 7 次串行：
+- Retry only retryable provider busy/transport/first-chunk failures.
+- Keep cross-interface fallback enabled.
+- Use serial retries by default; avoid aggressive concurrent hedging.
+- Add jitter so multiple local clients do not align retries.
+- For streams, do not commit the client response until the first provider chunk arrives.
+- If using hedging, use delayed hedging only after a first-attempt timeout budget and keep global in-flight attempts capped.
 
-```text
-native -> native -> alternate -> native -> alternate -> native -> alternate
-```
+### 6. Why did PI sometimes "read files for a long time, then dump output"?
 
-这个策略会增加延迟和后端 attempt 数，但在真实 PI 使用中能救回明显更多请求。
+Current evidence separates two phases:
 
-## 推荐 gateway 策略
+- Backend acceptance/first chunk for successful short streams can be under 1s.
+- Real PI streams in the attachment sometimes took 35-53s end-to-end after the gateway had already returned HTTP `200` to the client.
 
-| 策略项 | 推荐 |
-| --- | --- |
-| 重试类型 | 只重试 timeout、连接失败、首包前 empty stream、HTTP `408/409/425/429`、HTTP `5xx`、provider code `10310` |
-| 不重试类型 | 认证失败、参数错误和其他确定性 `4xx` |
-| attempt 顺序 | `native -> native -> alternate -> native -> alternate -> native -> alternate` |
-| delay | 短 delay + jitter，避免所有请求同步重试 |
-| hedging | 默认不开；如果未来做，只能 delayed hedging + budget |
-| streaming | 首个客户端可见 chunk 前允许换路；发出 chunk 后不做无损 failover |
-| 最终失败 | OpenAI surface 返回 `503`，Anthropic surface 返回 `529`，方便客户端请求级重试 |
+So the observed pause is not explained solely by retrying before the first chunk. Plausible contributors are:
 
-## 后续实验不应放大的风险
+- Provider generation duration for tool-heavy or long-context replies.
+- PI client buffering until it has a larger displayable chunk or until a tool/read phase completes.
+- Long streams occupying local/provider concurrency while later requests retry.
 
-后续实验应该继续温和、小样本、可复现：
+The small direct streaming probe did not reproduce a 200-with-no-first-chunk hang. The gateway's first-chunk timeout remains useful protection, but this experiment cannot prove PI buffering versus provider generation for full real workloads without timestamped client-side chunk logs.
 
-| 实验 | 目的 | 边界 |
-| --- | --- | --- |
-| OpenAI/Anthropic paired probe | 量化两个协议面的相关性 | 并发不超过 1，短 prompt |
-| direct/proxy route probe | 判断 route 是否显著影响成功率 | 不公开 proxy endpoint，不做大流量比较 |
-| concurrency ramp | 找账号级安全并发 | 主要测 1 和 2；3 只做短暂上界 |
-| 离线策略回放 | 比较 1/2/3/5/7 attempts 和 fallback 顺序 | 优先用已有 ledger，不靠大量真实请求 |
+## Operational recommendation
 
-## 重要修正
+Run MAAS Lifeboat as a conservative fallback gateway:
 
-早期“ready”的判断过于乐观。实验只证明 retry/fallback 有帮助；没有证明 provider 在 PI agents 真实工作负载下能接近 100% 可用。
+- Default 5 backend attempts.
+- Same-interface warm retry, then alternating cross-interface fallback.
+- Backoff + jitter between attempts.
+- Keep request-level proxy support as an optional route variable, not a promised availability improvement.
+- Keep raw JSONL ledgers local and ignored.
+- Watch request-level attempts, not just client-visible success, because a successful request may hide multiple backend `503/10310` attempts.

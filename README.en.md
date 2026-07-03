@@ -39,6 +39,7 @@ It is not a magic availability layer. If the upstream account, model pool, or pr
 | Earlier OpenAI single-surface probe | 53 requests | not separated | 33/53 = 62.3% | 53 | noisy single-surface success |
 | Earlier Anthropic single-surface probe | 50 requests | not separated | 29/50 = 58.0% | 50 | same order of reliability as OpenAI |
 | Earlier HTTP proxy-route probe | 104 requests | not separated | 63/104 = 60.6% | 104 | no obvious route magic bullet |
+| 2026-07-04 gentle probe | 140 independent non-streaming requests | 75/140 = 53.6% | offline 5-attempt budget about 88.2%; 7-attempt budget about 95.5% | 140 | `503/10310` was bursty and correlated across OpenAI/Anthropic faces |
 
 See [docs/reliability-findings.md](docs/reliability-findings.md) for more detail.
 
@@ -47,9 +48,9 @@ See [docs/reliability-findings.md](docs/reliability-findings.md) for more detail
 | Setting | Recommendation |
 | --- | --- |
 | Concurrency | `1` in-flight generation per account is safest; `2` can work but increases busy bursts |
-| Backend attempts | `MAAS_MAX_BACKEND_ATTEMPTS=7` if you accept extra latency/cost |
-| Attempt order | `native -> native -> alternate -> native -> alternate -> native -> alternate` |
-| Retry style | serial retry with short delay/jitter; avoid always-on aggressive hedging |
+| Backend attempts | default `MAAS_MAX_BACKEND_ATTEMPTS=5`; use `7` only for high-value calls if you accept extra latency/cost |
+| Attempt order | `native -> native -> alternate -> native -> alternate` |
+| Retry style | serial retry with mild backoff/jitter; avoid always-on aggressive hedging |
 | Final failure | return OpenAI `503` or Anthropic `529` so clients can retry the whole request |
 
 ## Setup
@@ -67,8 +68,13 @@ Important variables:
 MAAS_API_KEY='<upstream provider key>'
 MAAS_GATEWAY_API_KEY='local-client-key'
 MAAS_PROXY_URL=''
-MAAS_MAX_BACKEND_ATTEMPTS=7
+MAAS_MAX_BACKEND_ATTEMPTS=5
 MAAS_ENABLE_CROSS_INTERFACE_FALLBACK=1
+MAAS_SAME_RETRY_DELAY_S=0.8
+MAAS_ALT_RETRY_DELAY_S=1.2
+MAAS_RETRY_BACKOFF_MULTIPLIER=1.5
+MAAS_MAX_RETRY_DELAY_S=3.0
+MAAS_RETRY_JITTER_S=0.25
 MAAS_STREAM_FIRST_CHUNK_TIMEOUT_S=20
 ```
 
@@ -93,6 +99,13 @@ tail -f logs/gateway_requests.jsonl
 ```
 
 The ledger records payload hashes and attempt metadata, not full prompts or API keys.
+
+Provider probe:
+
+```bash
+python3 experiments/probe_maas.py --interfaces both --pattern paired --repeat 20 --rate-interval 0.35 --concurrency 1 --route-label direct
+python3 experiments/analyze_maas_ledger.py logs/probe_maas.jsonl logs/gateway_requests.jsonl --output docs/results/maas-probe-2026-07-04.md
+```
 
 ## Tests
 

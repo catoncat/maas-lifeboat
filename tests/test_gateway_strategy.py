@@ -13,7 +13,7 @@ from gateway.protocols import (
     openai_to_anthropic,
 )
 from gateway.sse import anthropic_stream_to_openai
-from gateway.strategy import MaasGateway
+from gateway.strategy import MaasGateway, attempt_interfaces
 from gateway.types import (
     AttemptResult,
     PreparedStreamFailure,
@@ -225,6 +225,14 @@ def test_strategy_retries_same_then_alternate(monkeypatch):
     assert final.ok
     assert [a.interface for a in attempts] == ["openai", "openai", "anthropic"]
     assert calls == ["/v2/chat/completions", "/v2/chat/completions", "/anthropic/v1/messages"]
+
+
+def test_default_attempt_plan_is_warm_five_step_fallback(monkeypatch):
+    monkeypatch.setattr(config, "MAX_BACKEND_ATTEMPTS", 5)
+    monkeypatch.setattr(config, "CROSS_INTERFACE_FALLBACK", True)
+
+    assert attempt_interfaces("openai") == ["openai", "openai", "anthropic", "openai", "anthropic"]
+    assert attempt_interfaces("anthropic") == ["anthropic", "anthropic", "openai", "anthropic", "openai"]
 
 
 def test_stream_retries_before_first_chunk(monkeypatch):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from typing import Any, AsyncIterator
 
@@ -36,7 +37,10 @@ def attempt_interfaces(native: Interface, max_attempts: int | None = None) -> li
 async def delay_before_attempt(step_index: int, interface: Interface, previous: Interface) -> None:
     if step_index == 0:
         return
-    delay = config.SAME_RETRY_DELAY_S if interface == previous else config.ALT_RETRY_DELAY_S
+    base_delay = config.SAME_RETRY_DELAY_S if interface == previous else config.ALT_RETRY_DELAY_S
+    delay = min(config.MAX_RETRY_DELAY_S, base_delay * (config.RETRY_BACKOFF_MULTIPLIER ** max(0, step_index - 1)))
+    if delay > 0 and config.RETRY_JITTER_S > 0:
+        delay += random.uniform(0, config.RETRY_JITTER_S)
     if delay > 0:
         await asyncio.sleep(delay)
 

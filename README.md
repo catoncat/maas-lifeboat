@@ -32,7 +32,7 @@
 | 改 route/IP/proxy 一定有用吗？ | 目前没有足够证据。只能当实验变量，不是主解法。 | 弱-中 |
 | 有明确 rate limit 吗？ | 没观察到干净的 `429` 或固定 RPM 阈值；更像瞬时容量/并发占用导致的 `503`。 | 中 |
 | 为什么 PI 并行时会卡？ | 长 streaming 请求会占用窗口；HTTP `200` 不等于客户端马上看到有效 chunk。 | 中 |
-| 7 次串行是否万能？ | 不是。真实日志里出现过 7/7 全 busy；但客户端立刻重试又成功。 | 强 |
+| 7 次串行是否万能？ | 不是。真实日志里出现过 7/7 全 busy；5 次默认更温和，7 次只适合高价值请求。 | 强 |
 
 ## 关键数据
 
@@ -43,6 +43,7 @@
 | 早期 OpenAI 单接口探测 | 53 次请求 | 未单独统计 | 33/53 = 62.3% | 53 | 单接口成功率明显不稳定 |
 | 早期 Anthropic 单接口探测 | 50 次请求 | 未单独统计 | 29/50 = 58.0% | 50 | 与 OpenAI 接口同量级 |
 | 早期 HTTP proxy route 探测 | 104 次请求 | 未单独统计 | 63/104 = 60.6% | 104 | 没看到“换路由就稳定”的证据 |
+| 2026-07-04 温和 probe | 140 个非流式独立请求 | 75/140 = 53.6% | 离线 5 次预算约 88.2%，7 次预算约 95.5% | 140 | `503/10310` 呈 burst；同一窗口 OpenAI/Anthropic 强相关 |
 
 这些样本还不够大，不能当通用 benchmark。它们能支持的判断是：**失败机制不像单纯客户端错误，也不像某一个协议面完全坏掉；更像上游容量在短时间内波动。**
 
@@ -53,9 +54,10 @@
 | 策略项 | 推荐值 | 原因 |
 | --- | --- | --- |
 | 并发 | 账号级 `1` 最稳；`2` 可用但更容易 busy | 并行 streaming 会占用上游容量窗口 |
-| 默认后端 attempts | `7` | PI 实测中能救回很多请求，但仍可能失败 |
-| 尝试顺序 | `native -> native -> alternate -> native -> alternate -> native -> alternate` | 先给原生接口一次同接口重试，再采样另一个兼容入口 |
-| 重试方式 | 串行 + 短 delay/jitter | 避免 aggressive hedging 把上游打得更忙 |
+| 默认后端 attempts | `5` | 比 7 次更温和；仍能覆盖多数短暂 busy 窗口 |
+| 高价值 attempts | `7` | PI 实测中能救回一些请求，但仍可能 7/7 全 busy |
+| 尝试顺序 | `native -> native -> alternate -> native -> alternate` | 先给原生接口一次同接口重试，再采样另一个兼容入口 |
+| 重试方式 | 串行 + backoff + jitter | 避免 aggressive hedging 把上游打得更忙 |
 | 最终失败 | 返回 OpenAI `503` 或 Anthropic `529` | 让 PI 这类客户端能继续做请求级重试 |
 | proxy | 只做 request-level proxy | 不修改系统代理，不影响其他应用 |
 
@@ -74,7 +76,7 @@
 - OpenAI-compatible `POST /v1/chat/completions`
 - Anthropic-compatible `POST /anthropic/v1/messages`
 - Local `/v1/models`
-- 串行重试 + 跨接口 fallback
+- 串行重试 + 跨接口 fallback + 温和 backoff/jitter
 - OpenAI 客户端路径下 fallback 仍保持 streaming
 - stream 首 chunk timeout：上游 HTTP `200` 但迟迟没有有效首包时，可以换下一次 attempt
 - OpenAI `tool_calls` 与 Anthropic `tool_use` 双向转换
@@ -97,8 +99,13 @@ $EDITOR .env.local
 MAAS_API_KEY='<upstream provider key>'
 MAAS_GATEWAY_API_KEY='local-client-key'
 MAAS_PROXY_URL=''
-MAAS_MAX_BACKEND_ATTEMPTS=7
+MAAS_MAX_BACKEND_ATTEMPTS=5
 MAAS_ENABLE_CROSS_INTERFACE_FALLBACK=1
+MAAS_SAME_RETRY_DELAY_S=0.8
+MAAS_ALT_RETRY_DELAY_S=1.2
+MAAS_RETRY_BACKOFF_MULTIPLIER=1.5
+MAAS_MAX_RETRY_DELAY_S=3.0
+MAAS_RETRY_JITTER_S=0.25
 MAAS_STREAM_FIRST_CHUNK_TIMEOUT_S=20
 ```
 
@@ -168,12 +175,21 @@ tail -f logs/gateway_requests.jsonl
 
 ```text
 [maas-gateway] request start id=... surface=openai stream=true ...
-[maas-gateway] attempt id=... n=1/7 interface=openai ok=false status=503 code=10310 ...
-[maas-gateway] attempt id=... n=3/7 interface=anthropic ok=true status=200 ...
+[maas-gateway] attempt id=... n=1/5 interface=openai ok=false status=503 code=10310 ...
+[maas-gateway] attempt id=... n=3/5 interface=anthropic ok=true status=200 ...
 [maas-gateway] request end id=... ok=true attempts=3 ...
 ```
 
 ledger 只记录 payload hash 和 attempt metadata，不记录完整 prompt 或 API key。
+
+Provider probe：
+
+```bash
+python3 experiments/probe_maas.py --interfaces both --pattern paired --repeat 20 --rate-interval 0.35 --concurrency 1 --route-label direct
+python3 experiments/analyze_maas_ledger.py logs/probe_maas.jsonl logs/gateway_requests.jsonl --output docs/results/maas-probe-2026-07-04.md
+```
+
+`logs/` 下的原始 JSONL ledger 默认不提交。对外分享前只使用聚合结果，并确认没有 key、完整 prompt、proxy URL 或个人路径。
 
 ## 项目结构
 
@@ -201,3 +217,4 @@ python3 -m compileall -q gateway
 - 上游 stream 已经给客户端发出 chunk 后，不能无损切换到另一个 completion。
 - streaming 转换覆盖 text 和 tool-call delta；复杂 multimodal streaming 未覆盖。
 - 成功率最终受上游容量限制。gateway 能改善瞬时失败处理，但不能修复账号级或 provider-wide 饱和。
+- route/proxy 可以作为 request-level 实验变量，但当前证据不能证明换 IP 会稳定修复 `503/10310`。
