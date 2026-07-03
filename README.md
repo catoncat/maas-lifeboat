@@ -8,6 +8,32 @@ The gateway is meant for tools such as PI agents, Cursor, OpenWebUI, LangChain, 
 
 It does not promise magic availability. If failures are caused by account-level quota, provider-wide saturation, or invalid credentials, the gateway can only surface cleaner retryable errors.
 
+## Reliability readout
+
+Current evidence points to upstream capacity/saturation, not a local client bug:
+
+- The dominant failure is HTTP `503` with provider code `10310` and message `The system is busy, please try again later.`
+- The same busy signal appears through both OpenAI-compatible and Anthropic-compatible surfaces.
+- In PI-agent streaming logs from July 4, 2026 local time, first attempts succeeded only 7/16 times. A 7-attempt gateway request still failed once, and the immediate client retry then succeeded.
+- In a later 15-request local gateway ledger, all 15 requests eventually succeeded, but they required 39 backend attempts. First attempts succeeded only 6/15 times.
+- Earlier single-surface probes were also noisy: OpenAI chat 33/53, Anthropic messages 29/50, and one HTTP-proxy route 63/104.
+
+Interpretation:
+
+- Retry and cross-interface fallback make the provider more usable, but they do not make it near-100% reliable.
+- The two interfaces are not independent enough to be treated as separate providers; both can return the same busy error in the same request window.
+- No hard `429` rate-limit response has been observed in these samples. The practical limit looks like transient account/model/provider capacity, made worse by overlapping long streaming requests.
+- There is not enough controlled evidence that changing route/IP/代理端口 fixes the failure. Treat proxy changes as a routing variable to measure, not as the primary cure.
+
+Recommended operating posture:
+
+- Keep concurrency low. `1` in-flight generation per account is safest; `2` can work but increases busy bursts.
+- Prefer gentle serial retries with short jittered delay over aggressive hedging.
+- Keep `MAAS_MAX_BACKEND_ATTEMPTS=7` only if you accept extra latency/cost. It improves real PI usage but can still fail.
+- Let clients retry final `503`/`529` errors. A failed 7-attempt request may succeed immediately on the next client-level retry.
+
+See [docs/reliability-findings.md](docs/reliability-findings.md) for the evidence and caveats.
+
 ## Features
 
 - OpenAI-compatible `POST /v1/chat/completions`
