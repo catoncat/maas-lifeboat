@@ -86,6 +86,22 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 
 下一轮 dogfood 要同时看最终成功率、attempts per success、`queue_wait_s` 和 `cooldown_wait_s`，否则只看“客户端有没有报错”会低估隐藏成本。
 
+## 2026-07-04 gateway dogfood
+
+这一轮只验证本地 queue/cooldown 记录链路，不把它当成功率结论。
+
+| 项目 | 结果 |
+| --- | --- |
+| 设置 | 独立端口临时 gateway；OpenAI-compatible streaming；客户端并发 2；`MAAS_MAX_INFLIGHT_REQUESTS=1` |
+| 请求数 | 4 |
+| 客户端成功 | 4/4 |
+| 后端 attempts | 4，全部 HTTP 200 |
+| queue 结果 | 3/4 请求发生排队；median queue wait 0.802s，p95 1.728s |
+| cooldown 结果 | 0/4 触发；本窗口没有 `503/10310` |
+| 结论 | queue 机制和结构化 pressure ledger 可用；但这个样本处在健康窗口，不能证明最终成功率提升 |
+
+聚合报告见 `docs/results/gateway-dogfood-2026-07-04.md`。
+
 ## 下一轮策略候选
 
 | 策略 | 假设 | 风险 | 实验方法 |

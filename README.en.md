@@ -41,6 +41,7 @@ It is not a magic availability layer. If the upstream account, model pool, or pr
 | Earlier Anthropic single-surface probe | 50 requests | not separated | 29/50 = 58.0% | 50 | same order of reliability as OpenAI |
 | Earlier HTTP proxy-route probe | 104 requests | not separated | 63/104 = 60.6% | 104 | no obvious route magic bullet |
 | 2026-07-04 gentle probe | 140 independent non-streaming requests | 75/140 = 53.6% | offline 5-attempt budget about 88.2%; 7-attempt budget about 95.5% | 140 | `503/10310` was bursty and correlated across OpenAI/Anthropic faces |
+| 2026-07-04 gateway dogfood | 4 streaming requests, client concurrency 2, local in-flight=1 | 4/4 | 4/4 | 4 | queue worked: 3/4 requests waited; median queue wait 0.802s; no `503/10310` in this window |
 
 See [docs/reliability-findings.md](docs/reliability-findings.md) for more detail.
 Offline strategy replay: [docs/results/maas-strategy-replay-2026-07-04.md](docs/results/maas-strategy-replay-2026-07-04.md).

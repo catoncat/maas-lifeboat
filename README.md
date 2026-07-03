@@ -45,6 +45,7 @@
 | 早期 Anthropic 单接口探测 | 50 次请求 | 未单独统计 | 29/50 = 58.0% | 50 | 与 OpenAI 接口同量级 |
 | 早期 HTTP proxy route 探测 | 104 次请求 | 未单独统计 | 63/104 = 60.6% | 104 | 没看到“换路由就稳定”的证据 |
 | 2026-07-04 温和 probe | 140 个非流式独立请求 | 75/140 = 53.6% | 离线 5 次预算约 88.2%，7 次预算约 95.5% | 140 | `503/10310` 呈 burst；同一窗口 OpenAI/Anthropic 强相关 |
+| 2026-07-04 gateway dogfood | 4 个 streaming 请求，客户端并发 2，本地 in-flight=1 | 4/4 | 4/4 | 4 | queue 生效：3/4 请求等待，median queue wait 0.802s；本窗口无 `503/10310` |
 
 这些样本还不够大，不能当通用 benchmark。它们能支持的判断是：**失败机制不像单纯客户端错误，也不像某一个协议面完全坏掉；更像上游容量在短时间内波动。**
 
@@ -245,6 +246,13 @@ Provider probe：
 ```bash
 python3 experiments/probe_maas.py --interfaces both --pattern paired --repeat 20 --rate-interval 0.35 --concurrency 1 --route-label direct
 python3 experiments/analyze_maas_ledger.py logs/probe_maas.jsonl logs/gateway_requests.jsonl --output docs/results/maas-probe-2026-07-04.md
+```
+
+Gateway dogfood probe：
+
+```bash
+python3 experiments/probe_gateway.py --base-url http://127.0.0.1:18788/v1 --repeat 4 --concurrency 2 --stream --ledger logs/gateway_dogfood_client.jsonl
+python3 experiments/analyze_gateway_dogfood.py --client-ledger logs/gateway_dogfood_client.jsonl --backend-ledger logs/gateway_requests.jsonl --run-id <run-id> --output docs/results/gateway-dogfood-YYYY-MM-DD.md
 ```
 
 `logs/` 下的原始 JSONL ledger 默认不提交。对外分享前只使用聚合结果，并确认没有 key、完整 prompt、proxy URL 或个人路径。
