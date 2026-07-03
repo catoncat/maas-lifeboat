@@ -1,0 +1,38 @@
+tests/test_gateway_strategy.py
+  s_67920a8fb1ac4b::t_78e54af0f3575b 248-250,259,264,268,460-461,488-496
+docs/strategy-optimization-plan.md
+  s_67920a8fb1ac4b::t_5d5b6eb365c811 75-88
+docs/results/maas-probe-2026-07-04.md
+  s_67920a8fb1ac4b::t_018c877f7e6e60 54-55,57
+  s_67920a8fb1ac4b::t_433831f8c3e12e 56
+gateway/pressure.py
+  s_67920a8fb1ac4b::t_f20e99c5de9ccd 12-21,25-27,58,60,63,65,68,74,76,80,83
+gateway/errors.py
+  s_67920a8fb1ac4b::t_f20e99c5de9ccd 49,52,55-60,63-68,82-85,87
+gateway/app.py
+  s_67920a8fb1ac4b::t_3964c1059e41ab 15-23,25,31-41,96-97,110,121,135,147,149,160,187-188,201,212,226,238,240,251
+  s_67920a8fb1ac4b::t_8475654320b8af 156,247
+  s_67920a8fb1ac4b::t_f0dc0a4d29f6a1 145,236
+experiments/analyze_maas_ledger.py
+  s_67920a8fb1ac4b::t_0723a4cfd4b677 192-239,246,259-260
+README.md
+  s_67920a8fb1ac4b::t_5d5b6eb365c811 233-241
+README.en.md
+  s_67920a8fb1ac4b::t_5d5b6eb365c811 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5f9eaf03258ed5fd9c14585d832fc8139ee3420f",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
