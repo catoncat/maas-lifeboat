@@ -1,0 +1,35 @@
+.env.example
+  s_273622bb59f18a::t_dae90673b2f1d0 1-14
+.github/workflows/test.yml
+  s_273622bb59f18a::t_137f73229d4842 1-22
+docs/reliability-findings.md
+  s_273622bb59f18a::t_4414b4899e4cb6 1-48
+gateway/maas_gateway.py
+  s_273622bb59f18a::t_d3e456fe3990ef 1-114
+scripts/uninstall_launchagent.sh
+  s_67920a8fb1ac4b::t_3c0cb7674eafff 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "17e7a8b599801bb98303d394561dcf94f39155a0",
+  "prompts": {},
+  "sessions": {
+    "s_273622bb59f18a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2916-b17f-7c63-b36c-8a9c99fa6836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    },
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
