@@ -1,0 +1,74 @@
+tests/test_gateway_strategy.py
+  s_67920a8fb1ac4b::t_ca0b56802b4c2e 455,475
+  s_67920a8fb1ac4b::t_898767737ee78a 253-269
+  s_67920a8fb1ac4b::t_07fc2819f4e9b8 9,239-250
+  s_67920a8fb1ac4b::t_363971f4e2e0b5 251-252
+.env.example
+  s_67920a8fb1ac4b::t_f34cda168754b1 18
+  s_67920a8fb1ac4b::t_0d0df2a4232af4 13
+  s_67920a8fb1ac4b::t_1c21ac07c7e56c 12
+gateway/maas_gateway.py
+  s_67920a8fb1ac4b::t_0d0df2a4232af4 15,18,59,62
+README.md
+  s_67920a8fb1ac4b::t_bdede352c5ec80 81-82,103,106-107,148-149,226-229
+  s_67920a8fb1ac4b::t_973e83627479ea 90-97,219,222
+  s_67920a8fb1ac4b::t_1322c63b0ef619 30-32,34,86-89,98-100,104-105
+  s_67920a8fb1ac4b::t_1c21ac07c7e56c 102,117
+  s_67920a8fb1ac4b::t_6ad248b24db93d 53-62
+  s_67920a8fb1ac4b::t_f34cda168754b1 9,19,68,101,108-109,116,140
+  s_67920a8fb1ac4b::t_e2a9ba6c906cf0 63
+  s_67920a8fb1ac4b::t_6a4f3c06baeb1a 230-231
+README.en.md
+  s_67920a8fb1ac4b::t_1322c63b0ef619 28-30,57
+  s_67920a8fb1ac4b::t_6ad248b24db93d 47-56
+  s_67920a8fb1ac4b::t_f34cda168754b1 7,17,63,84
+  s_67920a8fb1ac4b::t_58330f4038417b 46
+  s_67920a8fb1ac4b::t_1c21ac07c7e56c 92
+  s_67920a8fb1ac4b::t_65716e257a4b34 93
+gateway/app.py
+  s_67920a8fb1ac4b::t_9c2a7331f8efe9 27,77,100,125,162,185,210
+  s_67920a8fb1ac4b::t_f04c211a089a23 17,70-75,78,101,123-124,155-160,163,186,208-209
+.gitignore
+  s_67920a8fb1ac4b::t_65716e257a4b34 16
+docs/results/maas-strategy-replay-2026-07-04.md
+  s_67920a8fb1ac4b::t_48be1650c0626b 3
+  s_67920a8fb1ac4b::t_bb916f24b515ff 1-2,4-18,20,23-24,31-64,66-67,69
+  s_67920a8fb1ac4b::t_4d3bec38392ae5 19,21-22,25-30
+  s_67920a8fb1ac4b::t_3ea2c311583787 65,68
+gateway/config.py
+  s_67920a8fb1ac4b::t_f7d80fb7f7db12 28
+  s_67920a8fb1ac4b::t_9c2a7331f8efe9 22
+  s_67920a8fb1ac4b::t_0d0df2a4232af4 23
+experiments/replay_strategies.py
+  s_67920a8fb1ac4b::t_8ee53da010a963 421,424
+  s_67920a8fb1ac4b::t_45a5aec06285f8 143-163,311,328-329
+  s_67920a8fb1ac4b::t_48be1650c0626b 408
+  s_67920a8fb1ac4b::t_9ea5368366a4e4 1-142,164-310,312-327,330-407,409-420,422-423,425-439
+gateway/errors.py
+  s_67920a8fb1ac4b::t_0d0df2a4232af4 45-55,62,77
+gateway/pressure.py
+  s_67920a8fb1ac4b::t_9c2a7331f8efe9 35,37,39,46-49,57-66
+  s_67920a8fb1ac4b::t_f7d80fb7f7db12 1-34,36,38,40-45,50-56
+docs/strategy-optimization-plan.md
+  s_67920a8fb1ac4b::t_3de8e1902edf6f 11,15,29-44,78-79,89-90,94,100,102
+  s_67920a8fb1ac4b::t_1322c63b0ef619 1-10,12-14,16-28,51-54,58-77,81-82,84-88,95-99,104-105
+  s_67920a8fb1ac4b::t_89e46752362765 45-46,56-57,83,92-93,103
+  s_67920a8fb1ac4b::t_f34cda168754b1 47-50,55
+  s_67920a8fb1ac4b::t_1c21ac07c7e56c 80,91,101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f3138a1e8b58f0fb7ef01de70c163c3944bb5eae",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
