@@ -1,5 +1,7 @@
 # MAAS Lifeboat
 
+![MAAS Lifeboat four-panel banner](assets/readme-banner/maas-gateway-four-panel-comic.png)
+
 Local OpenAI/Anthropic-compatible lifeboat gateway for flaky MAAS coding providers.
 
 The gateway is meant for tools such as PI agents, Cursor, OpenWebUI, LangChain, and other OpenAI-compatible clients that need a local endpoint while an upstream provider intermittently returns `503` / `10310 system busy`.
