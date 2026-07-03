@@ -14,6 +14,27 @@ Offline replay against recorded ledgers. Scope: single-account only, one model, 
 | Anthropic -> OpenAI | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.80 | 9/20 | median 0.874s, p95 2.175s | median 1.957s, p95 2.859s |
 | Parallel both (upper bound) | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 2.00 | 9/20 | median 1.180s, p95 2.500s | median 0.790s, p95 2.132s |
 
+## Online EWMA interface-order replay
+
+- Samples: 20 paired windows, replayed online: each decision only sees earlier windows.
+
+- EWMA changes the first interface only. With fallback budget=2, final success can only improve if first-attempt ordering reduces wasted attempts; it cannot rescue same-window both-fail.
+
+| strategy | first picks | success | mean attempts | all-busy | backend latency | wall/first-success time |
+| --- | --- | --- | --- | --- | --- | --- |
+| Fixed OpenAI first, budget=1 | openai=20, anthropic=0 | 9/20 (45.0%, 95% CI 25.8%-65.8%) | 1.00 | 11/20 | median 0.400s, p95 1.529s | median 0.400s, p95 1.529s |
+| Fixed Anthropic first, budget=1 | openai=0, anthropic=20 | 4/20 (20.0%, 95% CI 8.1%-41.6%) | 1.00 | 16/20 | median 0.174s, p95 2.132s | median 0.174s, p95 2.132s |
+| Fixed OpenAI first, fallback budget=2 | openai=20, anthropic=0 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.55 | 9/20 | median 0.795s, p95 2.325s | median 1.510s, p95 3.525s |
+| Fixed Anthropic first, fallback budget=2 | openai=0, anthropic=20 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.80 | 9/20 | median 0.874s, p95 2.175s | median 1.957s, p95 2.859s |
+| EWMA alpha=0.2, budget=1 | openai=13, anthropic=7 | 8/20 (40.0%, 95% CI 21.9%-61.3%) | 1.00 | 12/20 | median 0.400s, p95 2.132s | median 0.400s, p95 2.132s |
+| EWMA alpha=0.2, budget=2 | openai=17, anthropic=3 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.60 | 9/20 | median 0.795s, p95 2.175s | median 1.541s, p95 2.845s |
+| EWMA alpha=0.35, budget=1 | openai=13, anthropic=7 | 8/20 (40.0%, 95% CI 21.9%-61.3%) | 1.00 | 12/20 | median 0.400s, p95 2.132s | median 0.400s, p95 2.132s |
+| EWMA alpha=0.35, budget=2 | openai=17, anthropic=3 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.60 | 9/20 | median 0.795s, p95 2.175s | median 1.541s, p95 2.845s |
+| EWMA alpha=0.5, budget=1 | openai=9, anthropic=11 | 6/20 (30.0%, 95% CI 14.5%-51.9%) | 1.00 | 14/20 | median 0.277s, p95 2.132s | median 0.277s, p95 2.132s |
+| EWMA alpha=0.5, budget=2 | openai=18, anthropic=2 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.55 | 9/20 | median 0.795s, p95 2.175s | median 1.531s, p95 2.845s |
+| EWMA alpha=0.8, budget=1 | openai=9, anthropic=11 | 6/20 (30.0%, 95% CI 14.5%-51.9%) | 1.00 | 14/20 | median 0.277s, p95 2.132s | median 0.277s, p95 2.132s |
+| EWMA alpha=0.8, budget=2 | openai=18, anthropic=2 | 11/20 (55.0%, 95% CI 34.2%-74.2%) | 1.55 | 9/20 | median 0.795s, p95 2.175s | median 1.531s, p95 2.845s |
+
 ## Trace replay of retry orders
 
 - Trace: 60 direct, non-stream, concurrency=1 attempts from runs that sampled both OpenAI and Anthropic. Near-end starts without enough future samples are excluded per strategy.
@@ -63,6 +84,7 @@ The probe timestamp is written after each response, so this is a coarse signal r
 
 - Cross-interface fallback is useful, but only for windows where one compatible face succeeds and the other fails.
 - Same-window both-fail is not a final single-account success ceiling. It only means protocol conversion cannot help at that instant; cooldown, serial retry, and client retry wait for a later window.
+- EWMA ordering is useful only if it lowers first-attempt waste on future windows. Keep it behind replay/feature-flag evidence because these two protocol faces are weakly decorrelated, not independent providers.
 - Always-on parallel hedging is a latency upper-bound strategy, not the default: it consumes two backend attempts per user request.
 - The next implementation target should be single-account pressure control: global queue, adaptive face ordering, and short cooldown after repeated `503/10310`.
 - Route/IP randomization and precise RPM/TPM fitting are lower-priority for this single-account project because the provider exposes pressure as the same `503/10310` signal.

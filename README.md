@@ -93,11 +93,12 @@
 | 并行 hedge 上界 | 同样 11/20，但每个请求固定消耗 2 次后端 attempts；不适合作为默认 |
 | busy 后立刻重试 | `<0.5s` 内下一次 0/25 成功；说明立即重打很差 |
 | busy 后短冷却 | `0.5-2s` 下一次 13/18 成功；支持 backoff/cooldown 方向 |
+| EWMA 接口排序 | 在 paired replay 里没有提高最终成功率；budget=2 最多打平固定 OpenAI-first | 不作为默认，只保留为后续 feature-flag 候选 |
 | x7 串行 | 比 x5 多救一部分窗口，但 p95 wall time 明显变长；只适合高价值请求 |
 
 | 策略方向 | 想解决的问题 | 下一步实验 |
 | --- | --- | --- |
-| 自适应接口排序 | 最近 OpenAI/Anthropic 哪个更健康，是否应该动态先试它 | 用 paired/probe ledger 做 EWMA replay |
+| 自适应接口排序 | 最近 OpenAI/Anthropic 哪个更健康，是否应该动态先试它 | 已做 EWMA replay，当前证据不足，不默认上线 |
 | 全局并发队列 | PI 并行对话会互相挤占上游窗口 | 已加入 `MAAS_MAX_INFLIGHT_REQUESTS`；下一步 dogfood 对比 |
 | burst 冷却/熔断 | 两个接口连续 busy 时继续打可能只是浪费 attempts | 已加入 all-busy 后短 cooldown；下一步 dogfood |
 | client-level retry 协同 | 7/7 全失败后下一轮可能立刻成功 | all-busy 时返回更长 `Retry-After`，观察 PI 是否尊重 |

@@ -220,15 +220,24 @@ def summarize_results(results: list[ReplayResult]) -> list[Any]:
     ]
 
 
-def paired_strategy_section(rows: list[dict[str, Any]]) -> str:
+def paired_windows(rows: list[dict[str, Any]]) -> list[dict[Interface, dict[str, Any]]]:
     pairs: dict[tuple[str, str], dict[Interface, dict[str, Any]]] = defaultdict(dict)
+    pair_times: dict[tuple[str, str], datetime] = {}
     for row in direct_nonstream_probe(rows, concurrency=1):
         pair_id = row.get("pair_id")
         interface = row.get("interface")
         if pair_id and interface in {"openai", "anthropic"}:
-            pairs[(str(row.get("run_id")), str(pair_id))][interface] = row  # type: ignore[index]
+            key = (str(row.get("run_id")), str(pair_id))
+            pairs[key][interface] = row  # type: ignore[index]
+            ts = parse_ts(row.get("timestamp"))
+            if ts is not None:
+                pair_times[key] = min(pair_times.get(key, ts), ts)
+    ordered = sorted(pairs.items(), key=lambda item: (pair_times.get(item[0]) or datetime.min, item[0]))
+    return [pair for _, pair in ordered if {"openai", "anthropic"} <= set(pair)]
 
-    complete = [pair for pair in pairs.values() if {"openai", "anthropic"} <= set(pair)]
+
+def paired_strategy_section(rows: list[dict[str, Any]]) -> str:
+    complete = paired_windows(rows)
     if not complete:
         return "- No complete paired windows."
 
@@ -249,6 +258,63 @@ def paired_strategy_section(rows: list[dict[str, Any]]) -> str:
             f"- Samples: {len(complete)} same-window direct paired probes.",
             md_table(
                 ["strategy", "success", "mean attempts", "all-busy", "backend latency", "wall/first-success time"],
+                table_rows,
+            ),
+        ]
+    )
+
+
+def update_score(score: float, ok: bool, alpha: float) -> float:
+    return alpha * (1.0 if ok else 0.0) + (1.0 - alpha) * score
+
+
+def ewma_paired_replay(pairs: list[dict[Interface, dict[str, Any]]], *, alpha: float, budget: int) -> tuple[list[ReplayResult], Counter[str]]:
+    scores: dict[Interface, float] = {"openai": 0.5, "anthropic": 0.5}
+    results: list[ReplayResult] = []
+    picks: Counter[str] = Counter()
+    for pair in pairs:
+        first: Interface = "openai" if scores["openai"] >= scores["anthropic"] else "anthropic"
+        sequence = [first]
+        if budget > 1:
+            sequence.append("anthropic" if first == "openai" else "openai")
+        result = sequence_result(sequence, pair)
+        results.append(result)
+        picks[first] += 1
+        for attempt_index, interface in enumerate(sequence):
+            row = pair[interface]
+            scores[interface] = update_score(scores[interface], bool(row.get("ok")), alpha)
+            if row.get("ok"):
+                break
+    return results, picks
+
+
+def ewma_section(rows: list[dict[str, Any]]) -> str:
+    complete = paired_windows(rows)
+    if not complete:
+        return "- No complete paired windows."
+
+    table_rows: list[list[Any]] = []
+    baselines = [
+        ("Fixed OpenAI first, budget=1", lambda: ([sequence_result(["openai"], pair) for pair in complete], Counter({"openai": len(complete)}))),
+        ("Fixed Anthropic first, budget=1", lambda: ([sequence_result(["anthropic"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
+        ("Fixed OpenAI first, fallback budget=2", lambda: ([sequence_result(["openai", "anthropic"], pair) for pair in complete], Counter({"openai": len(complete)}))),
+        ("Fixed Anthropic first, fallback budget=2", lambda: ([sequence_result(["anthropic", "openai"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
+    ]
+    for label, fn in baselines:
+        results, picks = fn()
+        table_rows.append([label, f"openai={picks['openai']}, anthropic={picks['anthropic']}", *summarize_results(results)])
+
+    for alpha in (0.2, 0.35, 0.5, 0.8):
+        for budget in (1, 2):
+            results, picks = ewma_paired_replay(complete, alpha=alpha, budget=budget)
+            table_rows.append([f"EWMA alpha={alpha:g}, budget={budget}", f"openai={picks['openai']}, anthropic={picks['anthropic']}", *summarize_results(results)])
+
+    return "\n\n".join(
+        [
+            f"- Samples: {len(complete)} paired windows, replayed online: each decision only sees earlier windows.",
+            "- EWMA changes the first interface only. With fallback budget=2, final success can only improve if first-attempt ordering reduces wasted attempts; it cannot rescue same-window both-fail.",
+            md_table(
+                ["strategy", "first picks", "success", "mean attempts", "all-busy", "backend latency", "wall/first-success time"],
                 table_rows,
             ),
         ]
@@ -408,6 +474,8 @@ def main() -> int:
             "Offline replay against recorded ledgers. Scope: single-account only, one model, no new provider requests.",
             "## Same-window paired strategy replay",
             paired_strategy_section(rows),
+            "## Online EWMA interface-order replay",
+            ewma_section(rows),
             "## Trace replay of retry orders",
             trace_strategy_section(rows),
             "## Cooldown signal after `503/10310`",
@@ -419,6 +487,7 @@ def main() -> int:
                 [
                     "- Cross-interface fallback is useful, but only for windows where one compatible face succeeds and the other fails.",
                     "- Same-window both-fail is not a final single-account success ceiling. It only means protocol conversion cannot help at that instant; cooldown, serial retry, and client retry wait for a later window.",
+                    "- EWMA ordering is useful only if it lowers first-attempt waste on future windows. Keep it behind replay/feature-flag evidence because these two protocol faces are weakly decorrelated, not independent providers.",
                     "- Always-on parallel hedging is a latency upper-bound strategy, not the default: it consumes two backend attempts per user request.",
                     "- The next implementation target should be single-account pressure control: global queue, adaptive face ordering, and short cooldown after repeated `503/10310`.",
                     "- Route/IP randomization and precise RPM/TPM fitting are lower-priority for this single-account project because the provider exposes pressure as the same `503/10310` signal.",

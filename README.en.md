@@ -45,6 +45,8 @@ It is not a magic availability layer. If the upstream account, model pool, or pr
 See [docs/reliability-findings.md](docs/reliability-findings.md) for more detail.
 Offline strategy replay: [docs/results/maas-strategy-replay-2026-07-04.md](docs/results/maas-strategy-replay-2026-07-04.md).
 
+The current EWMA interface-order replay did not improve final success. With a two-attempt fallback budget it only matched the fixed OpenAI-first baseline, so adaptive ordering is not a default strategy yet.
+
 ## Why keep protocol conversion?
 
 | Value | Explanation |
