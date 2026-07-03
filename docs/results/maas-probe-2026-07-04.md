@@ -51,6 +51,10 @@
 | gateway-ledger | anthropic | gateway-configured-route | 5/10 (50.0%, 95% CI 23.7%-76.3%) | - |
 | gateway-ledger | openai | gateway-configured-route | 10/29 (34.5%, 95% CI 19.9%-52.7%) | - |
 
+## Gateway pressure observations
+
+- No structured pressure fields in 15 gateway request rows.
+
 ## Status/error distribution
 
 | status | provider_code | finish | count |

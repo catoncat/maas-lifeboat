@@ -116,7 +116,7 @@ scripts/doctor_gateway.sh
 tail -f logs/gateway_requests.jsonl
 ```
 
-The ledger records payload hashes and attempt metadata, not full prompts or API keys.
+The ledger records payload hashes, attempt metadata, and pressure metadata, not full prompts or API keys. Pressure fields include `pressure.queue_wait_s`, `pressure.cooldown_wait_s`, `pressure.busy_cooldown_set_s`, and `pressure.retry_after_s`.
 
 Provider probe:
 

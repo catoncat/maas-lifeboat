@@ -230,7 +230,15 @@ tail -f logs/gateway_requests.jsonl
 [maas-gateway] cooldown set id=... surface=openai sleep=1.0s reason=all_attempts_10310
 ```
 
-ledger 只记录 payload hash 和 attempt metadata，不记录完整 prompt 或 API key。
+ledger 只记录 payload hash、attempt metadata 和 pressure metadata，不记录完整 prompt 或 API key。新增的 pressure 字段包括：
+
+| 字段 | 含义 |
+| --- | --- |
+| `pressure.inflight_limit` | 本地单账号同时放行的客户端 generation 数 |
+| `pressure.queue_wait_s` | 等待 in-flight permit 的时间 |
+| `pressure.cooldown_wait_s` | all-busy 后被 cooldown 挡住的时间 |
+| `pressure.busy_cooldown_set_s` | 本请求是否因为所有 attempts 都是 `503/10310` 而设置 cooldown |
+| `pressure.retry_after_s` | 最终失败时返回给客户端的 `Retry-After` 秒数 |
 
 Provider probe：
 

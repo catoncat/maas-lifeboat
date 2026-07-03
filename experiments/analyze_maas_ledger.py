@@ -189,12 +189,61 @@ def summarize_streams(attempts: list[dict[str, Any]]) -> str:
     return md_table(["run", "interface", "route", "stream success", "first chunk latency"], rows)
 
 
+def pressure_value(row: dict[str, Any], key: str) -> Any:
+    pressure = row.get("pressure")
+    return pressure.get(key) if isinstance(pressure, dict) else None
+
+
+def summarize_pressure(rows: list[dict[str, Any]]) -> str:
+    gateway_rows = [row for row in rows if isinstance(row.get("attempts"), list)]
+    with_pressure = [row for row in gateway_rows if isinstance(row.get("pressure"), dict)]
+    if not gateway_rows:
+        return "- No gateway request rows."
+    if not with_pressure:
+        return f"- No structured pressure fields in {len(gateway_rows)} gateway request rows."
+
+    groups: dict[tuple[Any, Any], list[dict[str, Any]]] = defaultdict(list)
+    for row in with_pressure:
+        groups[(row.get("surface"), row.get("stream", False))].append(row)
+
+    table_rows: list[list[Any]] = []
+    for key, vals in sorted(groups.items(), key=lambda item: str(item[0])):
+        queue_waits = [float(v) for row in vals if isinstance((v := pressure_value(row, "queue_wait_s")), (int, float))]
+        cooldown_waits = [float(v) for row in vals if isinstance((v := pressure_value(row, "cooldown_wait_s")), (int, float))]
+        total_waits = [float(v) for row in vals if isinstance((v := pressure_value(row, "total_wait_s")), (int, float))]
+        cooldown_sets = [float(v) for row in vals if isinstance((v := pressure_value(row, "busy_cooldown_set_s")), (int, float))]
+        retry_afters = [float(v) for row in vals if isinstance((v := pressure_value(row, "retry_after_s")), (int, float))]
+        table_rows.append(
+            [
+                key[0],
+                key[1],
+                len(vals),
+                quantiles(queue_waits),
+                quantiles(cooldown_waits),
+                quantiles(total_waits),
+                f"{len(cooldown_sets)}/{len(vals)}",
+                quantiles(retry_afters),
+            ]
+        )
+
+    return "\n\n".join(
+        [
+            f"- Gateway rows with pressure fields: {len(with_pressure)}/{len(gateway_rows)}",
+            md_table(
+                ["surface", "stream", "requests", "queue_wait", "cooldown_wait", "total_wait", "cooldown_set", "retry_after"],
+                table_rows,
+            ),
+        ]
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ledgers", nargs="+", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     attempts = normalise(load_rows(args.ledgers))
+    raw_rows = load_rows(args.ledgers)
 
     by_status = Counter((row.get("status"), str(row.get("provider_error_code")), row.get("finish_class")) for row in attempts)
     content = "\n\n".join(
@@ -207,6 +256,8 @@ def main() -> int:
             summarize_strategy(attempts),
             "## Streaming first-chunk observations",
             summarize_streams(attempts),
+            "## Gateway pressure observations",
+            summarize_pressure(raw_rows),
             "## Status/error distribution",
             md_table(["status", "provider_code", "finish", "count"], [[a, b, c, n] for (a, b, c), n in by_status.most_common()]),
         ]

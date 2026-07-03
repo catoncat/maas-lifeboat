@@ -245,6 +245,9 @@ def test_account_pressure_gate_serializes_requests():
         assert not second_task.done()
         first.release()
         second = await asyncio.wait_for(second_task, timeout=0.5)
+        assert second.inflight_limit == 1
+        assert second.queue_wait_s >= 0
+        assert second.cooldown_wait_s == 0
         second.release()
 
     run(scenario())
@@ -253,14 +256,16 @@ def test_account_pressure_gate_serializes_requests():
 def test_account_pressure_gate_cools_down_after_all_busy():
     async def scenario():
         gate = AccountPressureGate(1, busy_cooldown_s=0.02)
-        gate.observe_attempts(
+        cooldown_set_s = gate.observe_attempts(
             "req-1",
             "openai",
             [AttemptResult("openai", False, 503, 0.1, error_code=10310), AttemptResult("anthropic", False, 503, 0.1, error_code=10310)],
         )
+        assert cooldown_set_s == 0.02
         permit = await gate.acquire("req-2", "openai")
         try:
             assert permit.waited_s >= 0.01
+            assert permit.cooldown_wait_s >= 0.01
         finally:
             permit.release()
 
@@ -452,6 +457,8 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
     monkeypatch.setattr(config, "API_KEY", "provider-key:secret")
     monkeypatch.setattr(config, "CLIENT_API_KEY", "client-key")
     monkeypatch.setattr(config, "LEDGER", tmp_path / "gateway_requests.jsonl")
+    monkeypatch.setattr(config, "BUSY_COOLDOWN_S", 1.0)
+    monkeypatch.setattr(config, "MAX_INFLIGHT_REQUESTS", 1)
     monkeypatch.setattr(config, "ALL_BUSY_RETRY_AFTER_S", 3)
 
     async def fail_prepare(self, native, payload, request_id=None):
@@ -478,3 +485,12 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
     assert body["error"]["code"] == "service_unavailable"
     assert "503 service_unavailable" in body["error"]["message"]
     assert "The system is busy" in body["error"]["message"]
+
+    rows = [json.loads(line) for line in config.LEDGER.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    pressure = rows[0]["pressure"]
+    assert pressure["inflight_limit"] == 1
+    assert pressure["busy_cooldown_set_s"] == 1.0
+    assert pressure["retry_after_s"] == 3
+    assert pressure["queue_wait_s"] >= 0
+    assert pressure["cooldown_wait_s"] == 0

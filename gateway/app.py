@@ -12,12 +12,31 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import config
-from .errors import anthropic_error_response, check_client_auth, openai_error_response, require_provider_key
+from .errors import (
+    anthropic_error_response,
+    anthropic_error_status,
+    check_client_auth,
+    openai_error_response,
+    openai_error_status,
+    require_provider_key,
+    retry_after_seconds,
+)
 from .logging import append_jsonl, attempt_to_log, console_log, sha16, utc_now
-from .pressure import AccountPressureGate
+from .pressure import AccountPressureGate, PressurePermit
 from .protocols import anthropic_response_to_openai, openai_response_to_anthropic
 from .strategy import MaasGateway, attempt_interfaces
 from .types import PreparedStreamFailure
+
+
+def pressure_to_log(permit: PressurePermit, *, cooldown_set_s: float | None = None, retry_after_s: int | None = None) -> dict[str, float | int | None]:
+    return {
+        "inflight_limit": permit.inflight_limit,
+        "queue_wait_s": permit.queue_wait_s,
+        "cooldown_wait_s": permit.cooldown_wait_s,
+        "total_wait_s": permit.waited_s,
+        "busy_cooldown_set_s": cooldown_set_s,
+        "retry_after_s": retry_after_s,
+    }
 
 
 def make_app() -> FastAPI:
@@ -74,7 +93,8 @@ def make_app() -> FastAPI:
                 permit.release()
                 raise
             if isinstance(prepared, PreparedStreamFailure):
-                pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
+                cooldown_set_s = pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
+                retry_after_s = retry_after_seconds(openai_error_status(prepared.final), prepared.attempts)
                 permit.release()
                 console_log(f"request end id={request_id} surface=openai stream=true ok=false attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                 append_jsonl(
@@ -87,6 +107,7 @@ def make_app() -> FastAPI:
                         "payload_sha256_16": sha16(payload),
                         "ok": False,
                         "elapsed_s": round(time.perf_counter() - started, 3),
+                        "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s, retry_after_s=retry_after_s),
                         "attempts": [attempt_to_log(a) for a in prepared.attempts],
                     },
                 )
@@ -97,7 +118,7 @@ def make_app() -> FastAPI:
                     async for chunk in prepared.chunks:
                         yield chunk
                 finally:
-                    pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
+                    cooldown_set_s = pressure_gate.observe_attempts(request_id, "openai", prepared.attempts)
                     permit.release()
                     ok = any(a.ok for a in prepared.attempts)
                     console_log(f"request end id={request_id} surface=openai stream=true ok={str(ok).lower()} attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
@@ -111,6 +132,7 @@ def make_app() -> FastAPI:
                             "payload_sha256_16": sha16(payload),
                             "ok": ok,
                             "elapsed_s": round(time.perf_counter() - started, 3),
+                            "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s),
                             "attempts": [attempt_to_log(a) for a in prepared.attempts],
                         },
                     )
@@ -120,19 +142,22 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         started = time.perf_counter()
         console_log(f"request start id={request_id} surface=openai stream=false payload={sha16(payload)} max_attempts={len(attempt_interfaces('openai'))}")
-        async with await pressure_gate.acquire(request_id, "openai"):
+        async with await pressure_gate.acquire(request_id, "openai") as permit:
             final, attempts = await gateway.run_strategy("openai", payload, request_id)
-            pressure_gate.observe_attempts(request_id, "openai", attempts)
+            cooldown_set_s = pressure_gate.observe_attempts(request_id, "openai", attempts)
         success = final.ok and isinstance(final.response_json, dict)
+        retry_after_s = None if success else retry_after_seconds(openai_error_status(final), attempts)
         append_jsonl(
             config.LEDGER,
             {
                 "ts": utc_now(),
                 "request_id": request_id,
                 "surface": "openai",
+                "stream": False,
                 "payload_sha256_16": sha16(payload),
                 "ok": success,
                 "elapsed_s": round(time.perf_counter() - started, 3),
+                "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s, retry_after_s=retry_after_s),
                 "attempts": [attempt_to_log(a) for a in attempts],
             },
         )
@@ -159,7 +184,8 @@ def make_app() -> FastAPI:
                 permit.release()
                 raise
             if isinstance(prepared, PreparedStreamFailure):
-                pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
+                cooldown_set_s = pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
+                retry_after_s = retry_after_seconds(anthropic_error_status(prepared.final), prepared.attempts)
                 permit.release()
                 console_log(f"request end id={request_id} surface=anthropic stream=true ok=false attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
                 append_jsonl(
@@ -172,6 +198,7 @@ def make_app() -> FastAPI:
                         "payload_sha256_16": sha16(payload),
                         "ok": False,
                         "elapsed_s": round(time.perf_counter() - started, 3),
+                        "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s, retry_after_s=retry_after_s),
                         "attempts": [attempt_to_log(a) for a in prepared.attempts],
                     },
                 )
@@ -182,7 +209,7 @@ def make_app() -> FastAPI:
                     async for chunk in prepared.chunks:
                         yield chunk
                 finally:
-                    pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
+                    cooldown_set_s = pressure_gate.observe_attempts(request_id, "anthropic", prepared.attempts)
                     permit.release()
                     ok = any(a.ok for a in prepared.attempts)
                     console_log(f"request end id={request_id} surface=anthropic stream=true ok={str(ok).lower()} attempts={len(prepared.attempts)} elapsed={round(time.perf_counter() - started, 3)}s")
@@ -196,6 +223,7 @@ def make_app() -> FastAPI:
                             "payload_sha256_16": sha16(payload),
                             "ok": ok,
                             "elapsed_s": round(time.perf_counter() - started, 3),
+                            "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s),
                             "attempts": [attempt_to_log(a) for a in prepared.attempts],
                         },
                     )
@@ -205,19 +233,22 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         started = time.perf_counter()
         console_log(f"request start id={request_id} surface=anthropic stream=false payload={sha16(payload)} max_attempts={len(attempt_interfaces('anthropic'))}")
-        async with await pressure_gate.acquire(request_id, "anthropic"):
+        async with await pressure_gate.acquire(request_id, "anthropic") as permit:
             final, attempts = await gateway.run_strategy("anthropic", payload, request_id)
-            pressure_gate.observe_attempts(request_id, "anthropic", attempts)
+            cooldown_set_s = pressure_gate.observe_attempts(request_id, "anthropic", attempts)
         success = final.ok and isinstance(final.response_json, dict)
+        retry_after_s = None if success else retry_after_seconds(anthropic_error_status(final), attempts)
         append_jsonl(
             config.LEDGER,
             {
                 "ts": utc_now(),
                 "request_id": request_id,
                 "surface": "anthropic",
+                "stream": False,
                 "payload_sha256_16": sha16(payload),
                 "ok": success,
                 "elapsed_s": round(time.perf_counter() - started, 3),
+                "pressure": pressure_to_log(permit, cooldown_set_s=cooldown_set_s, retry_after_s=retry_after_s),
                 "attempts": [attempt_to_log(a) for a in attempts],
             },
         )

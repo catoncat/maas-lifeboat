@@ -46,17 +46,26 @@ def all_busy(attempts: list[AttemptResult]) -> bool:
     return bool(attempts) and all(not attempt.ok and str(attempt.error_code) == "10310" for attempt in attempts)
 
 
-def retry_after_header(status: int, attempts: list[AttemptResult]) -> dict[str, str] | None:
+def retry_after_seconds(status: int, attempts: list[AttemptResult]) -> int | None:
     if status not in {429, 503, 529}:
         return None
-    retry_after = config.ALL_BUSY_RETRY_AFTER_S if all_busy(attempts) else 1
-    return {"Retry-After": str(retry_after)}
+    return config.ALL_BUSY_RETRY_AFTER_S if all_busy(attempts) else 1
+
+
+def retry_after_header(status: int, attempts: list[AttemptResult]) -> dict[str, str] | None:
+    retry_after = retry_after_seconds(status, attempts)
+    return {"Retry-After": str(retry_after)} if retry_after is not None else None
+
+
+def openai_error_status(final: AttemptResult | None) -> int:
+    status = final.status_code if final and final.status_code and final.status_code >= 400 else 503
+    if final and retryable(final):
+        return 503
+    return status
 
 
 def openai_error_response(final: AttemptResult | None, attempts: list[AttemptResult]) -> JSONResponse:
-    status = final.status_code if final and final.status_code and final.status_code >= 400 else 503
-    if final and retryable(final):
-        status = 503
+    status = openai_error_status(final)
     return JSONResponse(
         status_code=status,
         headers=retry_after_header(status, attempts),
@@ -70,8 +79,12 @@ def openai_error_response(final: AttemptResult | None, attempts: list[AttemptRes
     )
 
 
+def anthropic_error_status(final: AttemptResult | None) -> int:
+    return 529 if final and retryable(final) else final.status_code if final and final.status_code and final.status_code >= 400 else 529
+
+
 def anthropic_error_response(final: AttemptResult | None, attempts: list[AttemptResult]) -> JSONResponse:
-    status = 529 if final and retryable(final) else final.status_code if final and final.status_code and final.status_code >= 400 else 529
+    status = anthropic_error_status(final)
     return JSONResponse(
         status_code=status,
         headers=retry_after_header(status, attempts),

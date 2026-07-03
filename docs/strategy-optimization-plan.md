@@ -72,6 +72,20 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 | provider_pressure | 同一时间 in-flight attempts 和 streams 的数量 |
 | retry_after_success | final error 后客户端下一轮 retry 成功率 |
 
+## 新增观测字段
+
+后续 PI dogfood 不再只看 console 文本。gateway ledger 会写入 `pressure` 对象：
+
+| 字段 | 用途 |
+| --- | --- |
+| `pressure.inflight_limit` | 当时的本地单账号并发上限 |
+| `pressure.queue_wait_s` | 用户请求在本地 queue 等了多久 |
+| `pressure.cooldown_wait_s` | 请求是否被 all-busy cooldown 延迟 |
+| `pressure.busy_cooldown_set_s` | 当前请求是否触发后续 cooldown |
+| `pressure.retry_after_s` | 最终失败时给客户端的 retry 建议 |
+
+下一轮 dogfood 要同时看最终成功率、attempts per success、`queue_wait_s` 和 `cooldown_wait_s`，否则只看“客户端有没有报错”会低估隐藏成本。
+
 ## 下一轮策略候选
 
 | 策略 | 假设 | 风险 | 实验方法 |
