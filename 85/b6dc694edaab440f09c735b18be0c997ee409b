@@ -1,0 +1,44 @@
+tests/test_gateway_strategy.py
+  s_cd8b22a9610383::t_48b1e9c5de3df9 16,230-235
+  s_cd8b22a9610383::t_d2a04f1bdb0633 236-237
+.env.example
+  s_cd8b22a9610383::t_f684c0bb7b282b 7-11,16
+experiments/analyze_maas_ledger.py
+  s_cd8b22a9610383::t_33a02f011077d9 177-191,208-209
+  s_cd8b22a9610383::t_658efafce5374a 1-176,192-207,210-223
+gateway/strategy.py
+  s_cd8b22a9610383::t_f684c0bb7b282b 7,40-43
+README.md
+  s_cd8b22a9610383::t_7d37bfd02c3238 178-179,185-193,220
+  s_cd8b22a9610383::t_0cb373ff4b97ea 35,46,57-60,79,102,104-108
+docs/reliability-findings.md
+  s_cd8b22a9610383::t_22c31c3835c4aa 1,3,5,7,9,11-17,19,21-28,30,32,34-37,39,41-47,49,51-56,58,60,62,64-69,71,73,75,77,79-101,103-131,134,137-150,152-153,155,157-159,161,163,165,167-172
+experiments/probe_maas.py
+  s_cd8b22a9610383::t_9431deb4adf02b 293
+  s_cd8b22a9610383::t_658efafce5374a 1-292,294-358
+README.en.md
+  s_cd8b22a9610383::t_6fbd3d07cf9c40 42,51-53,71,73-77,103-108
+  s_cd8b22a9610383::t_982d6afca292af 109
+gateway/config.py
+  s_cd8b22a9610383::t_f684c0bb7b282b 17-21,25
+gateway/maas_gateway.py
+  s_cd8b22a9610383::t_f684c0bb7b282b 21,26-27,63,68-69
+docs/results/maas-probe-2026-07-04.md
+  s_cd8b22a9610383::t_a00fb3ddf27a79 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "85b6dc694edaab440f09c735b18be0c997ee409b",
+  "prompts": {},
+  "sessions": {
+    "s_cd8b22a9610383": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2933-79d9-70d1-9ce1-e06f70ccc3dd",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
