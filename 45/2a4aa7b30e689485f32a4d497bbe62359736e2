@@ -1,0 +1,19 @@
+README.md
+  s_67920a8fb1ac4b::t_691789f5b90aa1 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "452a4aa7b30e689485f32a4d497bbe62359736e2",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
