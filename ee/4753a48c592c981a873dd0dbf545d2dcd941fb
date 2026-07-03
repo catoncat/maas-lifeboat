@@ -1,0 +1,30 @@
+docs/strategy-optimization-plan.md
+  s_67920a8fb1ac4b::t_9d0df4d946d4c5 89-104
+experiments/analyze_gateway_dogfood.py
+  s_67920a8fb1ac4b::t_3e4071e5b16ec5 1-146
+docs/results/gateway-dogfood-2026-07-04.md
+  s_67920a8fb1ac4b::t_6ec5baa8f1d940 1-41
+README.md
+  s_67920a8fb1ac4b::t_9d0df4d946d4c5 48,251-255
+  s_67920a8fb1ac4b::t_629e5ee2c69bb1 256-257
+README.en.md
+  s_67920a8fb1ac4b::t_9d0df4d946d4c5 44
+experiments/probe_gateway.py
+  s_67920a8fb1ac4b::t_9912d9e4147b53 1-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ee4753a48c592c981a873dd0dbf545d2dcd941fb",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
