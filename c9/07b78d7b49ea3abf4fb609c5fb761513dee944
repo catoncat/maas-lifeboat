@@ -1,0 +1,56 @@
+docs/results/model-fallback-probe-2026-07-04.md
+  s_67920a8fb1ac4b::t_1e5a4d9785a88b 1-42
+  s_67920a8fb1ac4b::t_15ac4cd2a26f7e 43
+gateway/config.py
+  s_67920a8fb1ac4b::t_77452b1d05acb7 13-18
+gateway/logging.py
+  s_67920a8fb1ac4b::t_8a25af6aac1463 40,52
+gateway/app.py
+  s_67920a8fb1ac4b::t_8a3314efbe8d8c 96,159,196,259
+tests/test_gateway_strategy.py
+  s_67920a8fb1ac4b::t_3bc757bd0c488f 420-432,438-533
+  s_67920a8fb1ac4b::t_8db2e9d30b97b9 433-437
+gateway/protocols.py
+  s_67920a8fb1ac4b::t_89d79eb117578d 13,15
+gateway/types.py
+  s_67920a8fb1ac4b::t_61a9441d4aab40 22
+gateway/strategy.py
+  s_67920a8fb1ac4b::t_73a57017039b62 186-187,190-194,204-205,207-208
+  s_67920a8fb1ac4b::t_8d0412d9b01e3e 212-217,221-222,226-229,241,260,282,298,315,328,345,351
+  s_67920a8fb1ac4b::t_8dfb73675a744a 230-232,410-412
+  s_67920a8fb1ac4b::t_bfa2b236a98fa3 37-42
+  s_67920a8fb1ac4b::t_2bc24b50301097 356,375,386
+  s_67920a8fb1ac4b::t_07f40b67f1298c 392-397,401-402,406-409,417-418
+  s_67920a8fb1ac4b::t_da6ae737322b49 43,50-114
+  s_67920a8fb1ac4b::t_222737b0ecc014 115-116
+.env.example
+  s_67920a8fb1ac4b::t_f422781ce13c8e 6-13
+README.md
+  s_67920a8fb1ac4b::t_65faf6fb3d36b3 157-158
+  s_67920a8fb1ac4b::t_cb7b910901fcef 214-215
+  s_67920a8fb1ac4b::t_4f5bd936156e25 77-84,94-95
+  s_67920a8fb1ac4b::t_b5a3f7ac84461a 211
+  s_67920a8fb1ac4b::t_ca8307ab346ab1 7,24-25,38
+  s_67920a8fb1ac4b::t_ee7a96c9800069 54,57
+  s_67920a8fb1ac4b::t_0f23b2f79a01a1 246,255
+  s_67920a8fb1ac4b::t_66bf037c166c03 311-312
+  s_67920a8fb1ac4b::t_0c7724c67c04af 206
+  s_67920a8fb1ac4b::t_5b8b43e21a7f7a 201-204
+  s_67920a8fb1ac4b::t_b1861de9719459 228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c907b78d7b49ea3abf4fb609c5fb761513dee944",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
