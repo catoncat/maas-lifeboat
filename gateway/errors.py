@@ -14,11 +14,11 @@ def require_provider_key() -> None:
         raise HTTPException(status_code=500, detail="MAAS_API_KEY is not configured")
 
 
-def check_client_auth(authorization: str | None) -> None:
+def check_client_auth(authorization: str | None, x_api_key: str | None = None) -> None:
     if not config.CLIENT_API_KEY:
         return
     expected = f"Bearer {config.CLIENT_API_KEY}"
-    if authorization != expected:
+    if authorization != expected and x_api_key != config.CLIENT_API_KEY:
         raise HTTPException(status_code=401, detail="invalid gateway API key")
 
 

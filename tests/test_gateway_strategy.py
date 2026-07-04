@@ -689,6 +689,43 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
     assert pressure["cooldown_wait_s"] == 0
 
 
+def test_anthropic_route_accepts_x_api_key_client_auth(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "API_KEY", "provider-key:secret")
+    monkeypatch.setattr(config, "CLIENT_API_KEY", "client-key")
+    monkeypatch.setattr(config, "LEDGER", tmp_path / "gateway_requests.jsonl")
+    monkeypatch.setattr(config, "BUSY_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(config, "MAX_INFLIGHT_REQUESTS", 1)
+
+    async def fake_prepare(self, native, payload, request_id=None):
+        assert native == "anthropic"
+
+        async def chunks():
+            yield b'data: {"type":"message_start","message":{"id":"msg1","type":"message","role":"assistant","model":"m","content":[]}}\n\n'
+            yield b'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
+            yield b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}\n\n'
+            yield b'data: {"type":"message_stop"}\n\n'
+
+        return PreparedStream(
+            interface="anthropic",
+            chunks=chunks(),
+            attempts=[AttemptResult("anthropic", True, 200, 0.01)],
+            total_attempts=1,
+        )
+
+    monkeypatch.setattr(MaasGateway, "prepare_stream_strategy", fake_prepare)
+    app = make_app()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/anthropic/v1/messages",
+            headers={"x-api-key": "client-key"},
+            json={"model": "astron-code-latest", "stream": True, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8},
+        )
+
+    assert response.status_code == 200
+    assert "text_delta" in response.text
+
+
 def test_stream_route_releases_queue_after_first_chunk(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "API_KEY", "provider-key:secret")
     monkeypatch.setattr(config, "CLIENT_API_KEY", "client-key")

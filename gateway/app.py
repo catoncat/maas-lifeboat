@@ -185,9 +185,9 @@ def make_app() -> FastAPI:
         return JSONResponse(body)
 
     @app.post("/anthropic/v1/messages")
-    async def anthropic_messages(request: Request, authorization: str | None = Header(default=None)):
+    async def anthropic_messages(request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)):
         require_provider_key()
-        check_client_auth(authorization)
+        check_client_auth(authorization, x_api_key)
         payload = await request.json()
         if payload.get("stream"):
             request_id = str(uuid.uuid4())
