@@ -4,7 +4,7 @@
 
 MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding provider 之间。
 
-它暴露 OpenAI/Anthropic-compatible API，内部做单账号排队、串行重试、跨接口 fallback、短冷却和结构化日志，用来缓解上游频繁返回 `503` / `10310 system busy` 的问题。
+它暴露 OpenAI/Anthropic-compatible API，内部做单账号排队、串行重试、跨接口 fallback、模型 fallback、短冷却和结构化日志，用来缓解上游频繁返回 `503` / `10310 system busy` 的问题。
 
 它不承诺把上游变成 100% 可用。它解决的是更现实的问题：**减少瞬时 busy 对用户的打断，同时把每一次尝试记录成可复算证据。**
 
@@ -21,6 +21,8 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | MAAS 经常直接返回 `503/10310` | 在首包前串行重试，不急着把失败暴露给客户端 |
 | PI 并行对话互相挤占单账号窗口 | 本地 queue 保护首包前的接入/重试阶段；stream 首包到达后释放 queue |
 | OpenAI/Anthropic 两个入口偶尔一边可用 | 失败后跨接口 fallback，但不把它们当独立 provider |
+| 最新 coding 模型在 busy 窗口更容易失败 | 可选模型 fallback：主模型连续 busy 后，切到较稳的同账号模型 |
+| fallback 模型上下文可能更小 | fallback 前做上下文估算，超出安全窗口就不切模型 |
 | all-busy 后立刻重打浪费请求 | 设置短 cooldown，并向客户端返回 `Retry-After` |
 | 不知道到底失败在哪 | JSONL ledger 记录每次 attempt、排队、cooldown 和错误码 |
 | 不能影响其他应用 | 只使用 request-level proxy，不改系统代理 |
@@ -33,6 +35,7 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | 不是本地网关单独造成 | 直连 OpenAI/Anthropic 兼容入口也能复现同样错误 | 保留后端直连 probe 和 gateway ledger |
 | 两个接口不是独立 provider | paired probe 20 对里 9 对两边同时 busy | fallback 有用，但不能当高可用双活 |
 | 两个接口有弱去相关 | paired probe 20 对里 9 对只有一边失败 | 保留协议转换和跨接口 fallback |
+| 模型本身也影响可用性 | 同时段直接请求里，`xopdeepseekv4pro` 6/6 成功，`astron-code-latest` 2/6 成功 | 把模型 fallback 作为可选救援层，不替代主模型 |
 | 固定 rate limit 没测出来 | 压力统一暴露为 `503/10310`，没有稳定 envelope | 文档只写经验边界，不写伪精确 RPM/TPM |
 | 并行 hedging 不适合默认 | paired replay 没提高最终成功率，只固定消耗 2 次 attempts | 默认用串行重试，不无脑并发 |
 | 本地 queue 值得保留，但不能锁完整 stream | dogfood 中 3/4 请求排队，4/4 成功，pressure ledger 可用 | 默认只串行化首包前窗口，不串行化整段长回复 |
@@ -48,9 +51,10 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | 单账号接入 queue | 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1`；stream 首包前排队，首包后释放，不锁完整长回复 |
 | 串行重试 | 默认 5 次，带 backoff 和 jitter |
 | 跨接口 fallback | OpenAI 客户端失败时可尝试 Anthropic 入口，反向也支持 |
+| 模型 fallback | 主模型所有基础 attempts 都是 `503/10310` 后，可切到备用模型；带上下文门禁和输出 token 截断 |
 | Streaming 保护 | 上游 `200` 但迟迟没有首个 chunk 时，不急着把响应提交给客户端 |
 | 工具调用转换 | 支持 OpenAI `tool_calls` 和 Anthropic `tool_use` 的双向转换 |
-| 思考参数转换 | 跨接口 fallback 时保留 `options.enable_thinking`、`thinking`；`thinking` block 和 `reasoning_content` 支持双向转换 |
+| 思考参数转换 | 跨接口 fallback 时保留 `options.enable_thinking`、`thinking`；模型 fallback 可单独去掉 thinking 控制，但保留工具调用 |
 | 可复算日志 | JSONL ledger 记录每次 attempt、queue/cooldown、Retry-After，不记录完整 prompt 或 key |
 | request-level proxy | 可配置代理，但不修改系统代理，不影响其他应用 |
 
@@ -70,6 +74,14 @@ MAAS_ALL_BUSY_RETRY_AFTER_S=3
 MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2
 MAAS_ALL_BUSY_RECOVERY_DELAY_S=3.0
 MAAS_STREAM_FIRST_CHUNK_TIMEOUT_S=20
+
+# 可选：备用模型救援。确认备用模型稳定后再打开。
+MAAS_MODEL_FALLBACKS=xopdeepseekv4pro
+MAAS_MODEL_FALLBACK_ATTEMPTS=3
+MAAS_MODEL_FALLBACK_CONTEXT_WINDOW=128000
+MAAS_MODEL_FALLBACK_MAX_TOKENS=32768
+MAAS_MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS=4096
+MAAS_MODEL_FALLBACK_STRIP_THINKING=1
 ```
 
 | 配置 | 为什么 |
@@ -79,6 +91,8 @@ MAAS_STREAM_FIRST_CHUNK_TIMEOUT_S=20
 | `MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2` | 只在基础 5 次全部是 `503/10310` 时触发，等一小段时间后再救援 2 次，减少 PI 直接看到 503 的概率。 |
 | `MAAS_BUSY_COOLDOWN_S=1.0` | 如果一个请求所有 attempts 都是 `503/10310`，下一位请求先短暂停一下。 |
 | `MAAS_ALL_BUSY_RETRY_AFTER_S=3` | all-busy 后给客户端更明确的请求级 retry 信号。 |
+| `MAAS_MODEL_FALLBACKS=xopdeepseekv4pro` | 可选救援层。只有主模型基础 attempts 全部 busy 且上下文估算低于 fallback 窗口时才会切。 |
+| `MAAS_MODEL_FALLBACK_STRIP_THINKING=1` | 备用模型实测对 64k thinking budget 返回授权失败，所以 fallback 默认去掉 thinking 控制；工具调用不受影响。 |
 
 如果你更看重并行体感，可以把 `MAAS_MAX_INFLIGHT_REQUESTS` 设为 `2`。不要直接理解成“完整回复并发数”：对 streaming 路径，它控制的是首包前的接入/重试阶段。
 
@@ -140,6 +154,8 @@ PI agents provider 示例：
 
 默认模型元数据按当前观测的 GLM 5.2 / Astron Code 设置：500k context window，131072 max output tokens。若 provider 调整限制，可用 `MAAS_CONTEXT_WINDOW` 和 `MAAS_MAX_TOKENS` 覆盖。
 
+如果开启 `xopdeepseekv4pro` 作为 fallback，客户端看到的主模型元数据仍然是 `astron-code-latest`。gateway 只在主模型连续 busy 后切备用模型，并用 `MAAS_MODEL_FALLBACK_CONTEXT_WINDOW` 做估算门禁：超出备用模型安全上下文时不切，避免把 500k 任务错误投给较小上下文模型。
+
 如果客户端支持请求覆盖，可以为 `astron-code-latest` 加上思考参数。gateway 会在 OpenAI/Anthropic fallback 转换时保留这些字段：
 
 ```json
@@ -182,19 +198,21 @@ console 会显示每次请求、排队、attempt 和释放：
 ```text
 [maas-gateway] request start id=... surface=openai stream=true ...
 [maas-gateway] queue acquired id=... surface=openai limit=1 waited=0.0s
-[maas-gateway] attempt id=... n=1/7 interface=openai ok=false status=503 code=10310 ...
-[maas-gateway] attempt id=... n=3/7 interface=anthropic ok=true status=200 ...
+[maas-gateway] attempt id=... n=1/8 interface=openai model=astron-code-latest ok=false status=503 code=10310 ...
+[maas-gateway] attempt id=... n=3/8 interface=anthropic model=astron-code-latest ok=false status=503 code=10310 ...
+[maas-gateway] model fallback start id=... model=xopdeepseekv4pro reason=estimated=...
+[maas-gateway] attempt id=... n=6/8 interface=openai model=xopdeepseekv4pro ok=true status=200 ...
 [maas-gateway] queue release id=... surface=openai limit=1
-[maas-gateway] request end id=... ok=true attempts=3 ...
+[maas-gateway] request end id=... ok=true attempts=6 ...
 ```
 
 对 streaming 请求，`queue release` 会在首个有效 chunk 已经拿到后发生；后续长回复继续 streaming，但不会继续占住 queue。
 
-如果基础 5 次全部是 `503/10310`，会先进入内部救援轮，而不是马上把 503 抛给 PI：
+如果基础 5 次全部是 `503/10310`，会先进入内部救援轮，而不是马上把 503 抛给 PI。未配置备用模型时，救援轮会等待一个短窗口后继续用主模型；配置备用模型时，会立即切备用模型，不额外等 3 秒：
 
 ```text
-[maas-gateway] all-busy recovery wait id=... sleep=3.0s
-[maas-gateway] attempt id=... n=6/7 interface=openai ok=true status=200 ...
+[maas-gateway] model fallback start id=... model=xopdeepseekv4pro reason=estimated=...
+[maas-gateway] attempt id=... n=6/8 interface=openai model=xopdeepseekv4pro ok=true status=200 ...
 ```
 
 如果一个请求所有后端 attempts 都是 `503/10310`，会额外看到：
@@ -207,7 +225,7 @@ ledger 不记录完整 prompt 或 API key，只记录 hash 和元数据。关键
 
 | 字段 | 含义 |
 | --- | --- |
-| `attempts[]` | 每次后端 attempt 的接口、状态码、错误码、耗时 |
+| `attempts[]` | 每次后端 attempt 的接口、模型、状态码、错误码、耗时 |
 | `request_start_ts` | 请求进入 gateway 的时间，用于分析 queue/cooldown 对后续请求的影响 |
 | `pressure.inflight_limit` | 本地 queue 上限 |
 | `pressure.queue_scope` | queue 保护范围；stream 成功时通常是 `first_chunk` |
@@ -225,6 +243,7 @@ ledger 不记录完整 prompt 或 API key，只记录 hash 和元数据。关键
 | 早期 HTTP proxy route 探测 | 104 | 63/104 成功 | 没看到“换路由就稳定”的证据 |
 | 2026-07-04 温和 probe | 140 | 首次 attempt 75/140；离线 5 次预算约 88.2% | `503/10310` 呈 burst；两个入口强相关 |
 | paired direct probe | 20 对 | 11/20 至少一边成功，9/20 两边都 busy | fallback 有价值，但不是双 provider 高可用 |
+| 模型对照直接请求 | 12 | `xopdeepseekv4pro` 6/6 成功；`astron-code-latest` 2/6 成功 | 同账号下模型维度有可用性差异，可作为救援层 |
 | gateway dogfood | 4 | 4/4 成功；3/4 发生本地排队 | 证明 queue 和 pressure ledger 生效；后续代码已改为 stream 首包后释放 queue |
 
 详细材料：
@@ -233,6 +252,7 @@ ledger 不记录完整 prompt 或 API key，只记录 hash 和元数据。关键
 - [MAAS probe 聚合报告](docs/results/maas-probe-2026-07-04.md)
 - [策略 replay 报告](docs/results/maas-strategy-replay-2026-07-04.md)
 - [gateway dogfood 报告](docs/results/gateway-dogfood-2026-07-04.md)
+- [模型 fallback 探测记录](docs/results/model-fallback-probe-2026-07-04.md)
 - [策略优化计划](docs/strategy-optimization-plan.md)
 
 ## 已试过但暂不默认的策略
@@ -288,5 +308,7 @@ python3 -m compileall -q gateway experiments
 
 - 上游 stream 已经给客户端发出 chunk 后，不能无损切换到另一个 completion。
 - streaming 转换覆盖 text、tool-call 和 thinking delta；复杂 multimodal streaming 未覆盖。
+- 模型 fallback 不是同质副本。备用模型可能上下文更小、输出风格不同；gateway 会做上下文门禁和 max token 截断，但不能保证语义完全等价。
+- 默认模型 fallback 会去掉 thinking 控制以避开备用模型授权失败；工具调用字段仍会透传。
 - 成功率最终受上游容量限制。gateway 能改善瞬时失败处理，但不能修复账号级或 provider-wide 饱和。
 - route/proxy 只作为 request-level 实验变量；当前证据不能证明换 IP 会稳定修复 `503/10310`。

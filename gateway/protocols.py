@@ -10,9 +10,9 @@ from typing import Any
 from . import config
 
 
-def normalize_model(payload: dict[str, Any]) -> dict[str, Any]:
+def normalize_model(payload: dict[str, Any], model: str | None = None) -> dict[str, Any]:
     out = dict(payload)
-    out["model"] = config.MODEL
+    out["model"] = model or config.MODEL
     return out
 
 

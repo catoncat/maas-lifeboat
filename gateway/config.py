@@ -10,6 +10,12 @@ BASE_URL = os.environ.get("MAAS_BASE_URL", "https://maas-coding-api.cn-huabei-1.
 MODEL = os.environ.get("MAAS_MODEL", "astron-code-latest")
 MODEL_CONTEXT_WINDOW = int(os.environ.get("MAAS_CONTEXT_WINDOW", "500000"))
 MODEL_MAX_TOKENS = int(os.environ.get("MAAS_MAX_TOKENS", "131072"))
+MODEL_FALLBACKS = [model.strip() for model in os.environ.get("MAAS_MODEL_FALLBACKS", "").split(",") if model.strip()]
+MODEL_FALLBACK_ATTEMPTS = max(0, int(os.environ.get("MAAS_MODEL_FALLBACK_ATTEMPTS", "0")))
+MODEL_FALLBACK_CONTEXT_WINDOW = max(1, int(os.environ.get("MAAS_MODEL_FALLBACK_CONTEXT_WINDOW", "128000")))
+MODEL_FALLBACK_MAX_TOKENS = max(1, int(os.environ.get("MAAS_MODEL_FALLBACK_MAX_TOKENS", "32768")))
+MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS = max(0, int(os.environ.get("MAAS_MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS", "4096")))
+MODEL_FALLBACK_STRIP_THINKING = os.environ.get("MAAS_MODEL_FALLBACK_STRIP_THINKING", "1") == "1"
 LEDGER = Path(os.environ.get("MAAS_GATEWAY_LOG", "logs/gateway_requests.jsonl"))
 API_KEY = os.environ.get("MAAS_API_KEY", "")
 CLIENT_API_KEY = os.environ.get("MAAS_GATEWAY_API_KEY")

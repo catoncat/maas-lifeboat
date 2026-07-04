@@ -93,7 +93,7 @@ def make_app() -> FastAPI:
             request_id = str(uuid.uuid4())
             request_start_ts = utc_now()
             started = time.perf_counter()
-            console_log(f"request start id={request_id} surface=openai stream=true payload={sha16(payload)} max_attempts={planned_attempt_count('openai')}")
+            console_log(f"request start id={request_id} surface=openai stream=true payload={sha16(payload)} max_attempts={planned_attempt_count('openai', payload)}")
             permit = await pressure_gate.acquire(request_id, "openai")
             try:
                 prepared = await gateway.prepare_stream_strategy("openai", payload, request_id)
@@ -156,7 +156,7 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         request_start_ts = utc_now()
         started = time.perf_counter()
-        console_log(f"request start id={request_id} surface=openai stream=false payload={sha16(payload)} max_attempts={planned_attempt_count('openai')}")
+        console_log(f"request start id={request_id} surface=openai stream=false payload={sha16(payload)} max_attempts={planned_attempt_count('openai', payload)}")
         async with await pressure_gate.acquire(request_id, "openai") as permit:
             final, attempts = await gateway.run_strategy("openai", payload, request_id)
             cooldown_set_s = pressure_gate.observe_attempts(request_id, "openai", attempts)
@@ -193,7 +193,7 @@ def make_app() -> FastAPI:
             request_id = str(uuid.uuid4())
             request_start_ts = utc_now()
             started = time.perf_counter()
-            console_log(f"request start id={request_id} surface=anthropic stream=true payload={sha16(payload)} max_attempts={planned_attempt_count('anthropic')}")
+            console_log(f"request start id={request_id} surface=anthropic stream=true payload={sha16(payload)} max_attempts={planned_attempt_count('anthropic', payload)}")
             permit = await pressure_gate.acquire(request_id, "anthropic")
             try:
                 prepared = await gateway.prepare_stream_strategy("anthropic", payload, request_id)
@@ -256,7 +256,7 @@ def make_app() -> FastAPI:
         request_id = str(uuid.uuid4())
         request_start_ts = utc_now()
         started = time.perf_counter()
-        console_log(f"request start id={request_id} surface=anthropic stream=false payload={sha16(payload)} max_attempts={planned_attempt_count('anthropic')}")
+        console_log(f"request start id={request_id} surface=anthropic stream=false payload={sha16(payload)} max_attempts={planned_attempt_count('anthropic', payload)}")
         async with await pressure_gate.acquire(request_id, "anthropic") as permit:
             final, attempts = await gateway.run_strategy("anthropic", payload, request_id)
             cooldown_set_s = pressure_gate.observe_attempts(request_id, "anthropic", attempts)

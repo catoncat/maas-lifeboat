@@ -19,6 +19,7 @@ class AttemptResult:
     error_type: str | None = None
     error_code: Any = None
     error_message: str | None = None
+    model: str | None = None
 
 
 @dataclass

@@ -417,6 +417,120 @@ def test_strategy_uses_all_busy_recovery_before_returning_503(monkeypatch):
     assert [a.interface for a in attempts] == ["openai", "openai", "anthropic", "openai", "anthropic", "openai"]
 
 
+def test_strategy_uses_model_fallback_after_primary_model_all_busy(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    monkeypatch.setattr(config, "MODEL", "astron-code-latest")
+    monkeypatch.setattr(config, "MODEL_FALLBACKS", ["xopdeepseekv4pro"])
+    monkeypatch.setattr(config, "MODEL_FALLBACK_ATTEMPTS", 2)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_WINDOW", 128000)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS", 0)
+    monkeypatch.setattr(config, "MAX_BACKEND_ATTEMPTS", 2)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_DELAY_S", 0)
+    monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(config, "ALT_RETRY_DELAY_S", 0)
+    bodies = []
+
+    async def unexpected_recovery_delay(request_id):
+        raise AssertionError("model fallback should not wait for same-model all-busy recovery")
+
+    monkeypatch.setattr("gateway.strategy.delay_before_all_busy_recovery", unexpected_recovery_delay)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body["model"] == "xopdeepseekv4pro":
+            return httpx.Response(200, json={"id": "chat1", "model": body["model"], "choices": [{"message": {"content": "OK"}}]})
+        return httpx.Response(503, json={"error": {"code": 10310, "message": "busy", "type": "server_error"}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.test") as client:
+            gateway = MaasGateway(client)
+            return await gateway.run_strategy("openai", {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 8})
+
+    final, attempts = run(scenario())
+
+    assert final.ok
+    assert [attempt.model for attempt in attempts] == ["astron-code-latest", "astron-code-latest", "xopdeepseekv4pro"]
+    assert [body["model"] for body in bodies] == ["astron-code-latest", "astron-code-latest", "xopdeepseekv4pro"]
+
+
+def test_model_fallback_strips_thinking_and_preserves_tools(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    monkeypatch.setattr(config, "MODEL", "astron-code-latest")
+    monkeypatch.setattr(config, "MODEL_FALLBACKS", ["xopdeepseekv4pro"])
+    monkeypatch.setattr(config, "MODEL_FALLBACK_ATTEMPTS", 1)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_WINDOW", 128000)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS", 0)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_MAX_TOKENS", 32768)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_STRIP_THINKING", True)
+    monkeypatch.setattr(config, "MAX_BACKEND_ATTEMPTS", 1)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_DELAY_S", 0)
+    monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(config, "ALT_RETRY_DELAY_S", 0)
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body["model"] == "xopdeepseekv4pro":
+            return httpx.Response(200, json={"id": "chat1", "model": body["model"], "choices": [{"message": {"content": "OK"}}]})
+        return httpx.Response(503, json={"error": {"code": 10310, "message": "busy", "type": "server_error"}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.test") as client:
+            gateway = MaasGateway(client)
+            return await gateway.run_strategy(
+                "openai",
+                {
+                    "messages": [{"role": "user", "content": "run pwd"}],
+                    "tools": [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}],
+                    "max_tokens": 64000,
+                    "options": {"enable_thinking": True},
+                    "thinking": {"type": "enabled", "budget_tokens": 64000},
+                },
+            )
+
+    final, _ = run(scenario())
+    fallback_body = bodies[-1]
+
+    assert final.ok
+    assert fallback_body["model"] == "xopdeepseekv4pro"
+    assert fallback_body["max_tokens"] == 32768
+    assert "thinking" not in fallback_body
+    assert "options" not in fallback_body
+    assert fallback_body["tools"] == [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+
+
+def test_model_fallback_skips_when_context_gate_is_exceeded(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    monkeypatch.setattr(config, "MODEL", "astron-code-latest")
+    monkeypatch.setattr(config, "MODEL_FALLBACKS", ["xopdeepseekv4pro"])
+    monkeypatch.setattr(config, "MODEL_FALLBACK_ATTEMPTS", 2)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_WINDOW", 10)
+    monkeypatch.setattr(config, "MODEL_FALLBACK_CONTEXT_SAFETY_TOKENS", 0)
+    monkeypatch.setattr(config, "MAX_BACKEND_ATTEMPTS", 1)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_ATTEMPTS", 1)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_DELAY_S", 0)
+    monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(config, "ALT_RETRY_DELAY_S", 0)
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(503, json={"error": {"code": 10310, "message": "busy", "type": "server_error"}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.test") as client:
+            gateway = MaasGateway(client)
+            return await gateway.run_strategy("openai", {"messages": [{"role": "user", "content": "x" * 1000}], "max_tokens": 8})
+
+    final, attempts = run(scenario())
+
+    assert not final.ok
+    assert len(attempts) == 2
+    assert [body["model"] for body in bodies] == ["astron-code-latest", "astron-code-latest"]
+
+
 def test_account_pressure_gate_serializes_requests():
     async def scenario():
         gate = AccountPressureGate(1)

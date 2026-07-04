@@ -37,6 +37,7 @@ def console_log_attempt(request_id: str | None, attempt_no: int, total: int, res
         f"id={request_id or '-'} "
         f"n={attempt_no}/{total} "
         f"interface={result.interface} "
+        f"model={result.model or '-'} "
         f"ok={str(result.ok).lower()} "
         f"status={result.status_code} "
         f"code={result.error_code} "
@@ -48,6 +49,7 @@ def console_log_attempt(request_id: str | None, attempt_no: int, total: int, res
 def attempt_to_log(result: AttemptResult) -> dict[str, Any]:
     return {
         "interface": result.interface,
+        "model": result.model,
         "ok": result.ok,
         "status_code": result.status_code,
         "elapsed_s": result.elapsed_s,
