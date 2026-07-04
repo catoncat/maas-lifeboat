@@ -1,0 +1,28 @@
+README.md
+  s_67920a8fb1ac4b::t_b90ed1a2115157 5-6,311
+  s_61344bb1b6cb0f::t_4ab3adb33e888e 312
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "63c0b4b94b7e691db7a649b38d5f8c58efc8333e",
+  "prompts": {},
+  "sessions": {
+    "s_61344bb1b6cb0f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f1cf4-a1bf-7841-aac7-4b42951dfc46",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    },
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
