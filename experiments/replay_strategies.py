@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Replay gateway strategies against recorded MAAS attempt ledgers.
+"""基于已记录的 MAAS attempt ledger 离线回放 gateway 策略。
 
-This is an offline experiment. It does not call the provider. The goal is to
-compare strategy shapes on the same observed busy/success trace before spending
-more real requests.
+这个脚本不调用 provider。它的作用是在消耗新请求前，用同一段
+busy/success 轨迹先筛掉明显不值得上线实测的策略。
 """
 
 from __future__ import annotations
@@ -98,7 +97,7 @@ def rate_cell(successes: int, total: int) -> str:
     if total == 0:
         return "0/0"
     lo, hi = wilson(successes, total)
-    return f"{successes}/{total} ({pct(successes / total)}, 95% CI {pct(lo)}-{pct(hi)})"
+    return f"{successes}/{total} ({pct(successes / total)}，95% 置信区间 {pct(lo)}-{pct(hi)})"
 
 
 def quantiles(values: list[float]) -> str:
@@ -106,7 +105,7 @@ def quantiles(values: list[float]) -> str:
         return "-"
     ordered = sorted(values)
     p95 = ordered[min(len(ordered) - 1, int(math.ceil(len(ordered) * 0.95)) - 1)]
-    return f"median {median(ordered):.3f}s, p95 {p95:.3f}s"
+    return f"中位数 {median(ordered):.3f}s，p95 {p95:.3f}s"
 
 
 def md_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -141,12 +140,11 @@ def direct_nonstream_probe(rows: list[dict[str, Any]], *, concurrency: int | Non
 
 
 def balanced_direct_trace(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return direct conc=1 runs that sampled both protocol faces.
+    """返回 direct、并发 1、且同一 run 里同时采样两个协议入口的轨迹。
 
-    Single-face baseline blocks are useful for raw success rates, but they bias
-    interface-order replay because a synthetic OpenAI-only policy can jump over
-    an Anthropic-only block. Strategy replay should use traces where both faces
-    were sampled in the same run.
+    单接口 baseline 适合看原始成功率，但会让接口顺序 replay 偏掉：
+    例如一个合成的 OpenAI-only 策略可能跨过整段 Anthropic-only 样本。
+    所以策略回放只使用同一 run 内两个入口都有采样的轨迹。
     """
 
     direct = direct_nonstream_probe(rows, concurrency=1)
@@ -239,14 +237,14 @@ def paired_windows(rows: list[dict[str, Any]]) -> list[dict[Interface, dict[str,
 def paired_strategy_section(rows: list[dict[str, Any]]) -> str:
     complete = paired_windows(rows)
     if not complete:
-        return "- No complete paired windows."
+        return "- 没有完整 paired 窗口。"
 
     strategies: list[tuple[str, Any]] = [
-        ("OpenAI only", lambda p: sequence_result(["openai"], p)),
-        ("Anthropic only", lambda p: sequence_result(["anthropic"], p)),
+        ("只用 OpenAI", lambda p: sequence_result(["openai"], p)),
+        ("只用 Anthropic", lambda p: sequence_result(["anthropic"], p)),
         ("OpenAI -> Anthropic", lambda p: sequence_result(["openai", "anthropic"], p)),
         ("Anthropic -> OpenAI", lambda p: sequence_result(["anthropic", "openai"], p)),
-        ("Parallel both (upper bound)", hedge_result),
+        ("两个入口并行（上界）", hedge_result),
     ]
     table_rows = []
     for name, fn in strategies:
@@ -255,9 +253,9 @@ def paired_strategy_section(rows: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(
         [
-            f"- Samples: {len(complete)} same-window direct paired probes.",
+            f"- 样本：{len(complete)} 个同窗口 direct paired probe。",
             md_table(
-                ["strategy", "success", "mean attempts", "all-busy", "backend latency", "wall/first-success time"],
+                ["策略", "成功", "平均 attempts", "all-busy", "后端耗时", "墙钟/首个成功耗时"],
                 table_rows,
             ),
         ]
@@ -291,14 +289,14 @@ def ewma_paired_replay(pairs: list[dict[Interface, dict[str, Any]]], *, alpha: f
 def ewma_section(rows: list[dict[str, Any]]) -> str:
     complete = paired_windows(rows)
     if not complete:
-        return "- No complete paired windows."
+        return "- 没有完整 paired 窗口。"
 
     table_rows: list[list[Any]] = []
     baselines = [
-        ("Fixed OpenAI first, budget=1", lambda: ([sequence_result(["openai"], pair) for pair in complete], Counter({"openai": len(complete)}))),
-        ("Fixed Anthropic first, budget=1", lambda: ([sequence_result(["anthropic"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
-        ("Fixed OpenAI first, fallback budget=2", lambda: ([sequence_result(["openai", "anthropic"], pair) for pair in complete], Counter({"openai": len(complete)}))),
-        ("Fixed Anthropic first, fallback budget=2", lambda: ([sequence_result(["anthropic", "openai"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
+        ("固定 OpenAI 优先，预算=1", lambda: ([sequence_result(["openai"], pair) for pair in complete], Counter({"openai": len(complete)}))),
+        ("固定 Anthropic 优先，预算=1", lambda: ([sequence_result(["anthropic"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
+        ("固定 OpenAI 优先，fallback 预算=2", lambda: ([sequence_result(["openai", "anthropic"], pair) for pair in complete], Counter({"openai": len(complete)}))),
+        ("固定 Anthropic 优先，fallback 预算=2", lambda: ([sequence_result(["anthropic", "openai"], pair) for pair in complete], Counter({"anthropic": len(complete)}))),
     ]
     for label, fn in baselines:
         results, picks = fn()
@@ -311,10 +309,10 @@ def ewma_section(rows: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(
         [
-            f"- Samples: {len(complete)} paired windows, replayed online: each decision only sees earlier windows.",
-            "- EWMA changes the first interface only. With fallback budget=2, final success can only improve if first-attempt ordering reduces wasted attempts; it cannot rescue same-window both-fail.",
+            f"- 样本：{len(complete)} 个 paired 窗口，按在线方式回放：每次决策只能看到更早的窗口。",
+            "- EWMA 只改变第一个接口。fallback 预算=2 时，它只能通过减少首选接口浪费来降低成本；同窗口两边都 busy 时，它救不了。",
             md_table(
-                ["strategy", "first picks", "success", "mean attempts", "all-busy", "backend latency", "wall/first-success time"],
+                ["策略", "首选次数", "成功", "平均 attempts", "all-busy", "后端耗时", "墙钟/首个成功耗时"],
                 table_rows,
             ),
         ]
@@ -376,12 +374,12 @@ def trace_replay(rows: list[dict[str, Any]], sequence: list[Interface], start: i
 def trace_strategy_section(rows: list[dict[str, Any]]) -> str:
     trace = balanced_direct_trace(rows)
     strategies = [
-        ("openai-only", "OpenAI only x5", 5),
-        ("anthropic-only", "Anthropic only x5", 5),
-        ("native-openai", "Current default shape x5", 5),
-        ("strict-openai-alt", "Strict OpenAI/Anthropic alternation x5", 5),
-        ("anthropic-first", "Anthropic-first shape x5", 5),
-        ("native-openai", "Current default shape x7", 7),
+        ("openai-only", "只用 OpenAI x5", 5),
+        ("anthropic-only", "只用 Anthropic x5", 5),
+        ("native-openai", "当前默认形状 x5", 5),
+        ("strict-openai-alt", "严格 OpenAI/Anthropic 交替 x5", 5),
+        ("anthropic-first", "Anthropic 优先形状 x5", 5),
+        ("native-openai", "当前默认形状 x7", 7),
     ]
     table_rows: list[list[Any]] = []
     for key, label, budget in strategies:
@@ -391,10 +389,10 @@ def trace_strategy_section(rows: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(
         [
-            f"- Trace: {len(trace)} direct, non-stream, concurrency=1 attempts from runs that sampled both OpenAI and Anthropic. Near-end starts without enough future samples are excluded per strategy.",
-            "- This is still an approximate replay; use it to compare strategy shapes, not to declare a precise rate limit.",
+            f"- 轨迹：{len(trace)} 个 direct、非 stream、并发 1 的 attempts；只取同一 run 内同时采样 OpenAI 和 Anthropic 的样本。每个策略都会排除尾部未来样本不足的起点。",
+            "- 这仍然只是近似 replay。它适合比较策略形状，不适合宣布精确 rate limit。",
             md_table(
-                ["strategy", "attempt order", "starts", "success", "mean attempts", "all-busy", "backend latency", "wall time"],
+                ["策略", "attempt 顺序", "起点数", "成功", "平均 attempts", "all-busy", "后端耗时", "墙钟耗时"],
                 table_rows,
             ),
         ]
@@ -441,9 +439,9 @@ def cooldown_section(rows: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(
         [
-            "The probe timestamp is written after each response, so this is a coarse signal rather than a causal cooldown proof.",
-            md_table(["gap after busy", "next samples", "next attempt success"], rows_out),
-            md_table(["busy streak length", "count"], streak_rows),
+            "probe 时间戳是在每个响应结束后写入的，所以这里是粗粒度信号，不是严格的 cooldown 因果证明。",
+            md_table(["busy 后间隔", "后续样本数", "下一次 attempt 成功"], rows_out),
+            md_table(["连续 busy 长度", "数量"], streak_rows),
         ]
     )
 
@@ -458,7 +456,7 @@ def concurrency_section(rows: list[dict[str, Any]]) -> str:
         successes = sum(1 for row in vals if row.get("ok"))
         busy = sum(1 for row in vals if str(row.get("provider_error_code")) == "10310")
         table_rows.append([key[0], key[1], rate_cell(successes, len(vals)), busy, quantiles([latency(row) for row in vals])])
-    return md_table(["concurrency", "interface", "success", "10310", "latency"], table_rows)
+    return md_table(["并发", "接口", "成功", "10310", "耗时"], table_rows)
 
 
 def main() -> int:
@@ -470,28 +468,28 @@ def main() -> int:
     rows = normalise(load_rows(args.ledgers))
     content = "\n\n".join(
         [
-            "# MAAS strategy replay",
-            "Offline replay against recorded ledgers. Scope: single-account only, one model, no new provider requests.",
-            "## Same-window paired strategy replay",
+            "# MAAS 策略 replay 报告",
+            "这是基于已记录 ledger 的离线回放。范围：单账号、单模型、不发新 provider 请求。",
+            "## 同窗口 paired 策略 replay",
             paired_strategy_section(rows),
-            "## Online EWMA interface-order replay",
+            "## 在线 EWMA 接口顺序 replay",
             ewma_section(rows),
-            "## Trace replay of retry orders",
+            "## 重试顺序 trace replay",
             trace_strategy_section(rows),
-            "## Cooldown signal after `503/10310`",
+            "## `503/10310` 后的 cooldown 信号",
             cooldown_section(rows),
-            "## Concurrency signal",
+            "## 并发信号",
             concurrency_section(rows),
-            "## Interpretation",
+            "## 解读",
             "\n".join(
                 [
-                    "- Cross-interface fallback is useful, but only for windows where one compatible face succeeds and the other fails.",
-                    "- Same-window both-fail is not a final single-account success ceiling. It only means protocol conversion cannot help at that instant; cooldown, serial retry, and client retry wait for a later window.",
-                    "- EWMA ordering is useful only if it lowers first-attempt waste on future windows. Keep it behind replay/feature-flag evidence because these two protocol faces are weakly decorrelated, not independent providers.",
-                    "- Always-on parallel hedging is a latency upper-bound strategy, not the default: it consumes two backend attempts per user request.",
-                    "- The next implementation target should be single-account pressure control: global queue, adaptive face ordering, and short cooldown after repeated `503/10310`.",
-                    "- Route/IP randomization and precise RPM/TPM fitting are lower-priority for this single-account project because the provider exposes pressure as the same `503/10310` signal.",
-                    "- These replay numbers are not causal rate-limit measurements. They are a cheap filter for which strategies deserve the next gentle live probe.",
+                    "- 跨接口 fallback 有价值，但只救“一个兼容入口成功、另一个失败”的窗口。",
+                    "- 同窗口 both-fail 不是单账号最终成功率天花板。它只说明协议转换在那个瞬间救不了；cooldown、串行重试和客户端 retry 等的是后面的窗口。",
+                    "- EWMA 排序只有在能降低未来首选接口浪费时才有用。两个协议入口只是弱去相关，不是独立 provider，所以它应继续留在 replay/feature flag 后面。",
+                    "- 常开并行 hedging 更像尾延迟上界策略，不适合默认：每个用户请求固定消耗两个后端 attempts。",
+                    "- 下一步主线应是单账号压力控制：全局 queue、短 cooldown、再谨慎评估接口排序。",
+                    "- route/IP 随机化和精确 RPM/TPM 拟合不是当前主线。provider 把压力统一暴露为 `503/10310`，单账号下很难分清路由收益和自然恢复窗口。",
+                    "- 这些 replay 数字不是因果 rate-limit 测量，只是用来筛选哪些策略值得做下一轮温和实测。",
                 ]
             ),
         ]

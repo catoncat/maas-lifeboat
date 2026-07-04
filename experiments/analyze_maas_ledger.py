@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate probe/gateway JSONL ledgers into a shareable Markdown report."""
+"""把 probe/gateway JSONL ledger 汇总成可提交的中文 Markdown 报告。"""
 
 from __future__ import annotations
 
@@ -76,9 +76,22 @@ def pct(value: float) -> str:
     return f"{100 * value:.1f}%"
 
 
+def yes_no(value: Any) -> str:
+    if value is True:
+        return "是"
+    if value is False:
+        return "否"
+    return "-"
+
+
+def finish_label(value: Any) -> str:
+    labels = {"ok": "成功", "http_error": "HTTP错误", "exception": "异常"}
+    return labels.get(str(value), str(value))
+
+
 def rate_cell(successes: int, total: int) -> str:
     lo, hi = wilson(successes, total)
-    return f"{successes}/{total} ({pct(successes / total if total else 0)}, 95% CI {pct(lo)}-{pct(hi)})"
+    return f"{successes}/{total} ({pct(successes / total if total else 0)}，95% 置信区间 {pct(lo)}-{pct(hi)})"
 
 
 def md_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -93,12 +106,12 @@ def quantiles(values: list[float]) -> str:
         return "-"
     ordered = sorted(values)
     p95 = ordered[min(len(ordered) - 1, int(math.ceil(len(ordered) * 0.95)) - 1)]
-    return f"median {median(ordered):.3f}s, p95 {p95:.3f}s"
+    return f"中位数 {median(ordered):.3f}s，p95 {p95:.3f}s"
 
 
 def summarize_attempts(attempts: list[dict[str, Any]]) -> str:
     lines: list[str] = []
-    lines.append(f"- Backend attempts: {len(attempts)}")
+    lines.append(f"- 后端 attempts：{len(attempts)}")
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in attempts:
         key = (row.get("run_id"), row.get("interface"), row.get("route_label"), row.get("stream"), row.get("concurrency"))
@@ -108,8 +121,8 @@ def summarize_attempts(attempts: list[dict[str, Any]]) -> str:
         successes = sum(1 for v in vals if v.get("ok"))
         busy = sum(1 for v in vals if str(v.get("provider_error_code")) == "10310")
         latencies = [float(v["latency_s"]) for v in vals if isinstance(v.get("latency_s"), (int, float))]
-        table_rows.append([key[0], key[1], key[2], key[3], key[4] or "-", rate_cell(successes, len(vals)), busy, quantiles(latencies)])
-    lines.append(md_table(["run", "interface", "route", "stream", "conc", "success", "10310", "latency"], table_rows))
+        table_rows.append([key[0], key[1], key[2], yes_no(key[3]), key[4] or "-", rate_cell(successes, len(vals)), busy, quantiles(latencies)])
+    lines.append(md_table(["run", "接口", "路线", "stream", "并发", "成功", "10310", "耗时"], table_rows))
     return "\n\n".join(lines)
 
 
@@ -123,21 +136,21 @@ def summarize_pairs(attempts: list[dict[str, Any]]) -> str:
             pairs[(run_id, pair_id)][interface] = row
     complete = [pair for pair in pairs.values() if {"openai", "anthropic"} <= set(pair)]
     if not complete:
-        return "- No complete same-window paired samples."
+        return "- 没有完整的同窗口 paired 样本。"
     counts = Counter((bool(pair["openai"].get("ok")), bool(pair["anthropic"].get("ok"))) for pair in complete)
     rows = [
-        ["OpenAI ok / Anthropic ok", counts[(True, True)]],
-        ["OpenAI ok / Anthropic fail", counts[(True, False)]],
-        ["OpenAI fail / Anthropic ok", counts[(False, True)]],
-        ["OpenAI fail / Anthropic fail", counts[(False, False)]],
+        ["OpenAI 成功 / Anthropic 成功", counts[(True, True)]],
+        ["OpenAI 成功 / Anthropic 失败", counts[(True, False)]],
+        ["OpenAI 失败 / Anthropic 成功", counts[(False, True)]],
+        ["OpenAI 失败 / Anthropic 失败", counts[(False, False)]],
     ]
     both_fail = counts[(False, False)]
     one_or_more_ok = len(complete) - both_fail
     return "\n\n".join(
         [
-            f"- Complete pairs: {len(complete)}",
-            f"- Cross-interface one-shot success in paired windows: {rate_cell(one_or_more_ok, len(complete))}",
-            md_table(["paired outcome", "count"], rows),
+            f"- 完整 paired 窗口：{len(complete)}",
+            f"- 同窗口只要允许跨接口尝试一次，成功窗口为：{rate_cell(one_or_more_ok, len(complete))}",
+            md_table(["paired 结果", "数量"], rows),
         ]
     )
 
@@ -147,7 +160,7 @@ def summarize_strategy(attempts: list[dict[str, Any]]) -> str:
     if len(eligible) < 5:
         eligible = [a for a in attempts if a.get("attempt_no") == 1]
     if len(eligible) < 5:
-        return "- Not enough independent single-attempt samples for offline retry simulation."
+        return "- 独立单次 attempt 样本不足，无法做离线重试预算模拟。"
     rows: list[list[Any]] = []
     for budget in (1, 2, 3, 5, 7):
         successes = 0
@@ -171,13 +184,13 @@ def summarize_strategy(attempts: list[dict[str, Any]]) -> str:
             costs.append(cost)
         total = len(latencies)
         rows.append([budget, rate_cell(successes, total), f"{sum(costs) / total:.2f}" if total else "-", quantiles(latencies)])
-    return md_table(["serial budget", "estimated success", "mean attempts", "summed backend latency"], rows)
+    return md_table(["串行预算", "估算成功率", "平均 attempts", "累计后端耗时"], rows)
 
 
 def summarize_streams(attempts: list[dict[str, Any]]) -> str:
     streams = [row for row in attempts if row.get("stream")]
     if not streams:
-        return "- No streaming samples."
+        return "- 没有 streaming 样本。"
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in streams:
         groups[(row.get("run_id"), row.get("interface"), row.get("route_label"))].append(row)
@@ -186,7 +199,7 @@ def summarize_streams(attempts: list[dict[str, Any]]) -> str:
         first_chunks = [float(v["first_chunk_latency_s"]) for v in vals if isinstance(v.get("first_chunk_latency_s"), (int, float))]
         successes = sum(1 for v in vals if v.get("ok"))
         rows.append([key[0], key[1], key[2], rate_cell(successes, len(vals)), quantiles(first_chunks)])
-    return md_table(["run", "interface", "route", "stream success", "first chunk latency"], rows)
+    return md_table(["run", "接口", "路线", "stream 成功", "首包耗时"], rows)
 
 
 def pressure_value(row: dict[str, Any], key: str) -> Any:
@@ -198,9 +211,9 @@ def summarize_pressure(rows: list[dict[str, Any]]) -> str:
     gateway_rows = [row for row in rows if isinstance(row.get("attempts"), list)]
     with_pressure = [row for row in gateway_rows if isinstance(row.get("pressure"), dict)]
     if not gateway_rows:
-        return "- No gateway request rows."
+        return "- 没有 gateway 请求行。"
     if not with_pressure:
-        return f"- No structured pressure fields in {len(gateway_rows)} gateway request rows."
+        return f"- {len(gateway_rows)} 行 gateway 请求里没有结构化 pressure 字段。"
 
     groups: dict[tuple[Any, Any], list[dict[str, Any]]] = defaultdict(list)
     for row in with_pressure:
@@ -228,9 +241,9 @@ def summarize_pressure(rows: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(
         [
-            f"- Gateway rows with pressure fields: {len(with_pressure)}/{len(gateway_rows)}",
+            f"- 带 pressure 字段的 gateway 请求：{len(with_pressure)}/{len(gateway_rows)}",
             md_table(
-                ["surface", "stream", "requests", "queue_wait", "cooldown_wait", "total_wait", "cooldown_set", "retry_after"],
+                ["入口", "stream", "请求数", "排队等待", "cooldown 等待", "总等待", "设置 cooldown", "Retry-After"],
                 table_rows,
             ),
         ]
@@ -248,18 +261,18 @@ def main() -> int:
     by_status = Counter((row.get("status"), str(row.get("provider_error_code")), row.get("finish_class")) for row in attempts)
     content = "\n\n".join(
         [
-            "# MAAS probe aggregate",
+            "# MAAS probe 聚合报告",
             summarize_attempts(attempts),
-            "## Same-window paired interface outcomes",
+            "## 同窗口 paired 接口结果",
             summarize_pairs(attempts),
-            "## Offline serial retry budget simulation",
+            "## 离线串行重试预算模拟",
             summarize_strategy(attempts),
-            "## Streaming first-chunk observations",
+            "## Streaming 首包观测",
             summarize_streams(attempts),
-            "## Gateway pressure observations",
+            "## Gateway pressure 观测",
             summarize_pressure(raw_rows),
-            "## Status/error distribution",
-            md_table(["status", "provider_code", "finish", "count"], [[a, b, c, n] for (a, b, c), n in by_status.most_common()]),
+            "## 状态码和错误分布",
+            md_table(["HTTP status", "provider_code", "结束类型", "数量"], [[a, b, finish_label(c), n] for (a, b, c), n in by_status.most_common()]),
         ]
     )
     if args.output:

@@ -1,41 +1,41 @@
-# Gateway dogfood aggregate
+# Gateway dogfood 聚合报告
 
-Scope: local gateway, single account, OpenAI-compatible streaming client path. Raw ledgers are not committed.
+范围：本地 gateway、单账号、OpenAI-compatible streaming 客户端路径。原始 ledger 不提交。
 
-## Overview
+## 总览
 
-| metric | value |
+| 指标 | 值 |
 | --- | --- |
 | run_id | 20260704-gateway-dogfood-queue-c1-clientc2-n4 |
-| client requests | 4 |
-| client success | 4/4 (100.0%) |
-| client statuses | 200:4 |
-| client latency | median 1.676s, p95 2.603s |
-| client first chunk | median 1.562s, p95 2.541s |
-| backend requests | 4 |
-| backend success | 4/4 (100.0%) |
-| backend attempts | 4 |
-| backend attempt statuses | 200:4 |
-| backend request latency | median 1.669s, p95 2.595s |
-| backend attempt latency | median 0.800s, p95 1.566s |
-| attempts per success | 1.00 |
+| 客户端请求数 | 4 |
+| 客户端成功 | 4/4 (100.0%) |
+| 客户端状态码 | 200:4 |
+| 客户端总耗时 | 中位数 1.676s，p95 2.603s |
+| 客户端首包耗时 | 中位数 1.562s，p95 2.541s |
+| gateway 请求数 | 4 |
+| gateway 成功 | 4/4 (100.0%) |
+| 后端 attempts | 4 |
+| 后端 attempt 状态码 | 200:4 |
+| gateway 请求耗时 | 中位数 1.669s，p95 2.595s |
+| 后端 attempt 耗时 | 中位数 0.800s，p95 1.566s |
+| 每次成功消耗 attempts | 1.00 |
 
-## Pressure observations
+## 排队和冷却观测
 
-| metric | value |
+| 指标 | 值 |
 | --- | --- |
-| queue wait | median 0.802s, p95 1.728s |
-| queue waited requests | 3/4 |
-| mean queue wait | 0.833s |
-| cooldown wait | median 0.000s, p95 0.000s |
-| cooldown set | 0/4 |
-| retry-after | - |
+| 排队等待 | 中位数 0.802s，p95 1.728s |
+| 发生排队的请求 | 3/4 |
+| 平均排队等待 | 0.833s |
+| cooldown 等待 | 中位数 0.000s，p95 0.000s |
+| 设置 cooldown | 0/4 |
+| Retry-After | - |
 
-## Backend request rows
+## Gateway 请求明细
 
-| # | ok | attempts | queue_wait_s | cooldown_wait_s | cooldown_set_s | elapsed_s | attempt_statuses |
+| # | 成功 | attempts | 排队等待(s) | cooldown等待(s) | 设置cooldown(s) | 总耗时(s) | attempt状态码 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | True | 1 | 0.0 | 0.0 | None | 1.729 | 200 |
-| 2 | True | 1 | 1.728 | 0.0 | None | 2.595 | 200 |
-| 3 | True | 1 | 0.864 | 0.0 | None | 1.608 | 200 |
-| 4 | True | 1 | 0.741 | 0.0 | None | 1.596 | 200 |
+| 1 | 是 | 1 | 0.0 | 0.0 | - | 1.729 | 200 |
+| 2 | 是 | 1 | 1.728 | 0.0 | - | 2.595 | 200 |
+| 3 | 是 | 1 | 0.864 | 0.0 | - | 1.608 | 200 |
+| 4 | 是 | 1 | 0.741 | 0.0 | - | 1.596 | 200 |

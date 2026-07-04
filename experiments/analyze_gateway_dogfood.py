@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate local gateway dogfood client/backend ledgers."""
+"""汇总本地 gateway dogfood 的客户端和后端 ledger。"""
 
 from __future__ import annotations
 
@@ -24,12 +24,22 @@ def pct(value: float) -> str:
     return f"{100 * value:.1f}%"
 
 
+def cell(value: Any) -> Any:
+    if value is True:
+        return "是"
+    if value is False:
+        return "否"
+    if value is None:
+        return "-"
+    return value
+
+
 def quantiles(values: list[float]) -> str:
     if not values:
         return "-"
     ordered = sorted(values)
     p95 = ordered[min(len(ordered) - 1, int(math.ceil(len(ordered) * 0.95)) - 1)]
-    return f"median {median(ordered):.3f}s, p95 {p95:.3f}s"
+    return f"中位数 {median(ordered):.3f}s，p95 {p95:.3f}s"
 
 
 def md_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -76,33 +86,33 @@ def main() -> int:
         attempt_status_counts[status] = attempt_status_counts.get(status, 0) + 1
 
     overview = md_table(
-        ["metric", "value"],
+        ["指标", "值"],
         [
             ["run_id", args.run_id],
-            ["client requests", len(client_rows)],
-            ["client success", f"{client_successes}/{len(client_rows)} ({pct(client_successes / len(client_rows)) if client_rows else '0.0%'})"],
-            ["client statuses", ", ".join(f"{k}:{v}" for k, v in sorted(status_counts.items(), key=lambda item: str(item[0])))],
-            ["client latency", quantiles(client_latencies)],
-            ["client first chunk", quantiles(first_chunks)],
-            ["backend requests", len(backend_rows)],
-            ["backend success", f"{backend_successes}/{len(backend_rows)} ({pct(backend_successes / len(backend_rows)) if backend_rows else '0.0%'})"],
-            ["backend attempts", len(backend_attempts)],
-            ["backend attempt statuses", ", ".join(f"{k}:{v}" for k, v in sorted(attempt_status_counts.items(), key=lambda item: str(item[0])))],
-            ["backend request latency", quantiles(backend_latencies)],
-            ["backend attempt latency", quantiles(attempt_latencies)],
-            ["attempts per success", f"{len(backend_attempts) / client_successes:.2f}" if client_successes else "-"],
+            ["客户端请求数", len(client_rows)],
+            ["客户端成功", f"{client_successes}/{len(client_rows)} ({pct(client_successes / len(client_rows)) if client_rows else '0.0%'})"],
+            ["客户端状态码", ", ".join(f"{k}:{v}" for k, v in sorted(status_counts.items(), key=lambda item: str(item[0])))],
+            ["客户端总耗时", quantiles(client_latencies)],
+            ["客户端首包耗时", quantiles(first_chunks)],
+            ["gateway 请求数", len(backend_rows)],
+            ["gateway 成功", f"{backend_successes}/{len(backend_rows)} ({pct(backend_successes / len(backend_rows)) if backend_rows else '0.0%'})"],
+            ["后端 attempts", len(backend_attempts)],
+            ["后端 attempt 状态码", ", ".join(f"{k}:{v}" for k, v in sorted(attempt_status_counts.items(), key=lambda item: str(item[0])))],
+            ["gateway 请求耗时", quantiles(backend_latencies)],
+            ["后端 attempt 耗时", quantiles(attempt_latencies)],
+            ["每次成功消耗 attempts", f"{len(backend_attempts) / client_successes:.2f}" if client_successes else "-"],
         ],
     )
 
     pressure = md_table(
-        ["metric", "value"],
+        ["指标", "值"],
         [
-            ["queue wait", quantiles(queue_waits)],
-            ["queue waited requests", f"{sum(1 for v in queue_waits if v > 0)}/{len(queue_waits)}"],
-            ["mean queue wait", f"{mean(queue_waits):.3f}s" if queue_waits else "-"],
-            ["cooldown wait", quantiles(cooldown_waits)],
-            ["cooldown set", f"{len(cooldown_sets)}/{len(backend_rows)}"],
-            ["retry-after", quantiles(retry_afters)],
+            ["排队等待", quantiles(queue_waits)],
+            ["发生排队的请求", f"{sum(1 for v in queue_waits if v > 0)}/{len(queue_waits)}"],
+            ["平均排队等待", f"{mean(queue_waits):.3f}s" if queue_waits else "-"],
+            ["cooldown 等待", quantiles(cooldown_waits)],
+            ["设置 cooldown", f"{len(cooldown_sets)}/{len(backend_rows)}"],
+            ["Retry-After", quantiles(retry_afters)],
         ],
     )
 
@@ -112,26 +122,26 @@ def main() -> int:
         rows.append(
             [
                 index,
-                row.get("ok"),
+                cell(row.get("ok")),
                 len(attempts),
-                pressure_value(row, "queue_wait_s"),
-                pressure_value(row, "cooldown_wait_s"),
-                pressure_value(row, "busy_cooldown_set_s"),
-                row.get("elapsed_s"),
+                cell(pressure_value(row, "queue_wait_s")),
+                cell(pressure_value(row, "cooldown_wait_s")),
+                cell(pressure_value(row, "busy_cooldown_set_s")),
+                cell(row.get("elapsed_s")),
                 ",".join(str(attempt.get("status_code")) for attempt in attempts),
             ]
         )
 
     content = "\n\n".join(
         [
-            "# Gateway dogfood aggregate",
-            "Scope: local gateway, single account, OpenAI-compatible streaming client path. Raw ledgers are not committed.",
-            "## Overview",
+            "# Gateway dogfood 聚合报告",
+            "范围：本地 gateway、单账号、OpenAI-compatible streaming 客户端路径。原始 ledger 不提交。",
+            "## 总览",
             overview,
-            "## Pressure observations",
+            "## 排队和冷却观测",
             pressure,
-            "## Backend request rows",
-            md_table(["#", "ok", "attempts", "queue_wait_s", "cooldown_wait_s", "cooldown_set_s", "elapsed_s", "attempt_statuses"], rows),
+            "## Gateway 请求明细",
+            md_table(["#", "成功", "attempts", "排队等待(s)", "cooldown等待(s)", "设置cooldown(s)", "总耗时(s)", "attempt状态码"], rows),
         ]
     )
     if args.output:
