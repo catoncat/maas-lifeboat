@@ -30,6 +30,21 @@ def openai_chunk(chunk_id: str, model: str, delta: dict[str, Any], finish_reason
     )
 
 
+def reasoning_delta_text(delta: dict[str, Any]) -> str:
+    value = delta.get("reasoning_content")
+    if value is None:
+        value = delta.get("reasoning")
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("content", "text", "reasoning_content", "summary"):
+            if value.get(key):
+                return str(value[key])
+    return str(value)
+
+
 async def iter_sse_json(response: httpx.Response) -> AsyncIterator[tuple[str | None, dict[str, Any]]]:
     buffer = ""
     async for text in response.aiter_text():
@@ -86,6 +101,10 @@ async def anthropic_stream_to_openai(response: httpx.Response) -> AsyncIterator[
                 text = block.get("text") or ""
                 if text:
                     yield openai_chunk(chunk_id, model, {"content": text})
+            elif block_type == "thinking":
+                thinking = block.get("thinking") or block.get("text") or ""
+                if thinking:
+                    yield openai_chunk(chunk_id, model, {"reasoning_content": thinking})
             elif block_type == "tool_use":
                 saw_tool = True
                 tool_index = len(tool_index_by_content_index)
@@ -116,6 +135,10 @@ async def anthropic_stream_to_openai(response: httpx.Response) -> AsyncIterator[
                 text = delta.get("text") or ""
                 if text:
                     yield openai_chunk(chunk_id, model, {"content": text})
+            elif delta_type == "thinking_delta":
+                thinking = delta.get("thinking") or delta.get("text") or ""
+                if thinking:
+                    yield openai_chunk(chunk_id, model, {"reasoning_content": thinking})
             elif delta_type == "input_json_delta":
                 saw_tool = True
                 tool_index = tool_index_by_content_index.get(content_index, content_index)
@@ -153,6 +176,7 @@ async def openai_stream_to_anthropic(response: httpx.Response) -> AsyncIterator[
     started = False
     next_block_index = 0
     text_block_index: int | None = None
+    thinking_block_index: int | None = None
     tool_blocks: dict[int, int] = {}
     open_blocks: set[int] = set()
     stop_reason = "end_turn"
@@ -186,6 +210,21 @@ async def openai_stream_to_anthropic(response: httpx.Response) -> AsyncIterator[
 
         choice = (event.get("choices") or [{}])[0]
         delta = choice.get("delta") or {}
+        reasoning = reasoning_delta_text(delta)
+        if reasoning:
+            if thinking_block_index is None:
+                thinking_block_index = next_block_index
+                next_block_index += 1
+                open_blocks.add(thinking_block_index)
+                yield sse(
+                    {"type": "content_block_start", "index": thinking_block_index, "content_block": {"type": "thinking", "thinking": ""}},
+                    event="content_block_start",
+                )
+            yield sse(
+                {"type": "content_block_delta", "index": thinking_block_index, "delta": {"type": "thinking_delta", "thinking": reasoning}},
+                event="content_block_delta",
+            )
+
         content = delta.get("content")
         if content:
             if text_block_index is None:

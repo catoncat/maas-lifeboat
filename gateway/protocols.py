@@ -151,6 +151,31 @@ def anthropic_tool_choice_to_openai(choice: Any) -> Any:
     return None
 
 
+def copy_thinking_controls(source: dict[str, Any], target: dict[str, Any]) -> None:
+    """Preserve vendor thinking controls across compatible API translations."""
+    if "options" in source:
+        target["options"] = source["options"]
+    if "thinking" in source:
+        target["thinking"] = source["thinking"]
+        options = target.get("options")
+        if isinstance(options, dict) and isinstance(source["thinking"], dict) and source["thinking"].get("type") == "enabled":
+            options.setdefault("enable_thinking", True)
+        elif isinstance(source["thinking"], dict) and source["thinking"].get("type") == "enabled":
+            target["options"] = {"enable_thinking": True}
+
+
+def reasoning_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("content", "text", "reasoning_content", "summary"):
+            if value.get(key):
+                return str(value[key])
+    return str(value)
+
+
 def openai_to_anthropic(openai_payload: dict[str, Any]) -> dict[str, Any]:
     messages = openai_payload.get("messages") or []
     system_parts: list[str] = []
@@ -231,6 +256,7 @@ def openai_to_anthropic(openai_payload: dict[str, Any]) -> dict[str, Any]:
     tool_choice = openai_tool_choice_to_anthropic(openai_payload.get("tool_choice"))
     if tool_choice is not None:
         converted["tool_choice"] = tool_choice
+    copy_thinking_controls(openai_payload, converted)
     return converted
 
 
@@ -293,15 +319,19 @@ def anthropic_to_openai(anthropic_payload: dict[str, Any]) -> dict[str, Any]:
     tool_choice = anthropic_tool_choice_to_openai(anthropic_payload.get("tool_choice"))
     if tool_choice is not None:
         converted["tool_choice"] = tool_choice
+    copy_thinking_controls(anthropic_payload, converted)
     return converted
 
 
 def anthropic_response_to_openai(obj: dict[str, Any]) -> dict[str, Any]:
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     for item in obj.get("content", []):
         if isinstance(item, dict) and item.get("type") == "text":
             text_parts.append(str(item.get("text", "")))
+        elif isinstance(item, dict) and item.get("type") == "thinking":
+            thinking_parts.append(str(item.get("thinking") or item.get("text") or ""))
         elif isinstance(item, dict) and item.get("type") == "tool_use":
             tool_calls.append(
                 {
@@ -312,6 +342,8 @@ def anthropic_response_to_openai(obj: dict[str, Any]) -> dict[str, Any]:
             )
     usage = obj.get("usage") or {}
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text_parts) if text_parts else None}
+    if thinking_parts:
+        message["reasoning_content"] = "".join(thinking_parts)
     if tool_calls:
         message["tool_calls"] = tool_calls
     return {
@@ -339,6 +371,9 @@ def openai_response_to_anthropic(obj: dict[str, Any]) -> dict[str, Any]:
     content_blocks: list[dict[str, Any]] = []
     if choices:
         message = choices[0].get("message") or {}
+        reasoning = reasoning_text(message.get("reasoning_content") or message.get("reasoning"))
+        if reasoning:
+            content_blocks.append({"type": "thinking", "thinking": reasoning})
         content = message.get("content") or ""
         if content:
             content_blocks.append({"type": "text", "text": content})

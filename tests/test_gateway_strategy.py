@@ -13,7 +13,7 @@ from gateway.protocols import (
     openai_response_to_anthropic,
     openai_to_anthropic,
 )
-from gateway.sse import anthropic_stream_to_openai
+from gateway.sse import anthropic_stream_to_openai, openai_stream_to_anthropic
 from gateway.strategy import MaasGateway, attempt_interfaces
 from gateway.types import (
     AttemptResult,
@@ -57,6 +57,72 @@ def test_response_conversions():
         {"id": "chat1", "model": "m", "choices": [{"message": {"content": "OK"}}], "usage": {"prompt_tokens": 2, "completion_tokens": 1}}
     )
     assert anthropic["content"][0]["text"] == "OK"
+
+
+def test_request_conversions_preserve_thinking_controls():
+    controls = {
+        "options": {"enable_thinking": True},
+        "thinking": {"type": "enabled", "budget_tokens": 64000},
+    }
+
+    anthropic = openai_to_anthropic(
+        {
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 8,
+            **controls,
+        }
+    )
+    assert anthropic["options"] == controls["options"]
+    assert anthropic["thinking"] == controls["thinking"]
+
+    openai = anthropic_to_openai(
+        {
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 8,
+            **controls,
+        }
+    )
+    assert openai["options"] == controls["options"]
+    assert openai["thinking"] == controls["thinking"]
+
+
+def test_request_conversion_enables_options_when_thinking_is_enabled():
+    out = openai_to_anthropic(
+        {
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": 1000},
+        }
+    )
+    assert out["thinking"] == {"type": "enabled", "budget_tokens": 1000}
+    assert out["options"] == {"enable_thinking": True}
+
+
+def test_response_conversions_preserve_thinking_content():
+    openai = anthropic_response_to_openai(
+        {
+            "id": "msg1",
+            "model": "m",
+            "content": [{"type": "thinking", "thinking": "think first"}, {"type": "text", "text": "OK"}],
+            "usage": {"input_tokens": 2, "output_tokens": 4},
+        }
+    )
+    message = openai["choices"][0]["message"]
+    assert message["reasoning_content"] == "think first"
+    assert message["content"] == "OK"
+
+    anthropic = openai_response_to_anthropic(
+        {
+            "id": "chat1",
+            "model": "m",
+            "choices": [{"message": {"reasoning_content": "think first", "content": "OK"}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 4},
+        }
+    )
+    assert anthropic["content"][0] == {"type": "thinking", "thinking": "think first"}
+    assert anthropic["content"][1] == {"type": "text", "text": "OK"}
 
 
 def test_openai_to_anthropic_preserves_tools_and_tool_history():
@@ -198,6 +264,61 @@ def test_anthropic_stream_to_openai_preserves_tool_calls():
     assert "data: [DONE]" in body
 
 
+def test_anthropic_stream_to_openai_preserves_thinking_delta():
+    response = httpx.Response(
+        200,
+        content=(
+            b'event: message_start\n'
+            b'data: {"type":"message_start","message":{"id":"msg1","model":"m","content":[]}}\n\n'
+            b'event: content_block_start\n'
+            b'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n'
+            b'event: content_block_delta\n'
+            b'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think "}}\n\n'
+            b'event: content_block_delta\n'
+            b'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"first"}}\n\n'
+            b'event: content_block_start\n'
+            b'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n'
+            b'event: content_block_delta\n'
+            b'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}}\n\n'
+            b'event: message_delta\n'
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+            b'event: message_stop\n'
+            b'data: {"type":"message_stop"}\n\n'
+        ),
+    )
+    chunks = run(_collect(anthropic_stream_to_openai(response)))
+    body = b"".join(chunks).decode()
+    events = [json.loads(part.removeprefix("data: ")) for part in body.split("\n\n") if part.startswith("data: {")]
+    deltas = [event["choices"][0]["delta"] for event in events]
+
+    assert {"reasoning_content": "think "} in deltas
+    assert {"reasoning_content": "first"} in deltas
+    assert {"content": "OK"} in deltas
+    assert "data: [DONE]" in body
+
+
+def test_openai_stream_to_anthropic_preserves_reasoning_content_delta():
+    response = httpx.Response(
+        200,
+        content=(
+            b'data: {"id":"chat1","model":"m","choices":[{"delta":{"role":"assistant"}}]}\n\n'
+            b'data: {"id":"chat1","model":"m","choices":[{"delta":{"reasoning_content":"think "}}]}\n\n'
+            b'data: {"id":"chat1","model":"m","choices":[{"delta":{"reasoning_content":"first"}}]}\n\n'
+            b'data: {"id":"chat1","model":"m","choices":[{"delta":{"content":"OK"}}]}\n\n'
+            b'data: {"id":"chat1","model":"m","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            b"data: [DONE]\n\n"
+        ),
+    )
+    chunks = run(_collect(openai_stream_to_anthropic(response)))
+    body = b"".join(chunks).decode()
+
+    assert '"type": "thinking"' in body
+    assert '"type": "thinking_delta", "thinking": "think "' in body
+    assert '"type": "thinking_delta", "thinking": "first"' in body
+    assert '"type": "text_delta", "text": "OK"' in body
+    assert "message_stop" in body
+
+
 async def _collect(chunks):
     out = []
     async for chunk in chunks:
@@ -227,6 +348,38 @@ def test_strategy_retries_same_then_alternate(monkeypatch):
     assert final.ok
     assert [a.interface for a in attempts] == ["openai", "openai", "anthropic"]
     assert calls == ["/v2/chat/completions", "/v2/chat/completions", "/anthropic/v1/messages"]
+
+
+def test_strategy_fallback_carries_thinking_controls_to_alternate_interface(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(config, "ALT_RETRY_DELAY_S", 0)
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        if len(bodies) < 3:
+            return httpx.Response(503, json={"error": {"code": 10310, "message": "busy", "type": "server_error"}})
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}], "id": "msg1", "model": "m", "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.test") as client:
+            gateway = MaasGateway(client)
+            return await gateway.run_strategy(
+                "openai",
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 8,
+                    "options": {"enable_thinking": True},
+                    "thinking": {"type": "enabled", "budget_tokens": 64000},
+                },
+            )
+
+    final, attempts = run(scenario())
+    assert final.ok
+    assert [a.interface for a in attempts] == ["openai", "openai", "anthropic"]
+    assert bodies[2]["options"] == {"enable_thinking": True}
+    assert bodies[2]["thinking"] == {"type": "enabled", "budget_tokens": 64000}
 
 
 def test_default_attempt_plan_is_warm_five_step_fallback(monkeypatch):
