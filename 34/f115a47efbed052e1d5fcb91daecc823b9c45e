@@ -1,0 +1,46 @@
+README.md
+  s_67920a8fb1ac4b::t_c8dd6c85fa3b3d 11
+  s_67920a8fb1ac4b::t_1b6eec17235dc6 7,9,13,15-17,19,21,23-28,30,32,34-40,42,44
+  s_67920a8fb1ac4b::t_695cc183bc59f4 46-58,60-72,74,76-79,90,98,100,153,160,177,181,185,188-217,222,253,261
+  s_67920a8fb1ac4b::t_93f926c0cb4437 225,237-244
+docs/reliability-findings.md
+  s_67920a8fb1ac4b::t_5ee315ee781b9e 1,5,7-16,18,20,22-29,31,33,35,37-41,43,45,47-50,52,54,56,58,60-67,71,73,75,77,79,81,83,85,87,89,91,93,95,97,99,107,113,115,117,119,121,123-132,134,136-141,143
+  s_67920a8fb1ac4b::t_f09fd1c75257af 3,69
+docs/results/maas-strategy-replay-2026-07-04.md
+  s_67920a8fb1ac4b::t_195b25cc932aa9 1,3,5,7,9,11-15,17,19,21,23,25-44,46-51,53,55,57,59-63,65,74,76,78-91
+docs/strategy-optimization-plan.md
+  s_67920a8fb1ac4b::t_0cfd20d247d8bd 3,14,21-22,35,37,40,56,58-59,77,89,95,99,114,121,133-134
+experiments/analyze_gateway_dogfood.py
+  s_67920a8fb1ac4b::t_54746a68ef9b0c 2,42,89,92-103,108,110-115,137-139,141,143
+  s_67920a8fb1ac4b::t_49101d803deef3 27-36,125,127-130
+  s_67920a8fb1ac4b::t_3c49488dbe6220 144
+experiments/analyze_maas_ledger.py
+  s_67920a8fb1ac4b::t_caec89c3158859 79-91,124,275
+  s_67920a8fb1ac4b::t_484fed0deffacc 2,94,109,114,125,139,142-145,151-153,163,187,193,202,214,216,244,246,264,266,268,270,272,274
+docs/results/gateway-dogfood-2026-07-04.md
+  s_67920a8fb1ac4b::t_195b25cc932aa9 1,3,5,7,10-21,23,25,27-32,34,36
+  s_67920a8fb1ac4b::t_5bc9a957f2566f 38-41
+experiments/replay_strategies.py
+  s_67920a8fb1ac4b::t_a6057252c85533 2,4-5,100,108,143,145-147,243-244,247,256,258,292,296-299,312-313,315
+  s_67920a8fb1ac4b::t_f4d00a23cc88b5 377-382,392-393,395,442-444,459,471-473,475,477,479,481,483,486-492
+  s_67920a8fb1ac4b::t_57a4ed40e299bb 240
+docs/results/maas-probe-2026-07-04.md
+  s_67920a8fb1ac4b::t_195b25cc932aa9 1,3,5,21-28,30-33,35,37,39-43,45,47,49-52,54,56,58,60
+  s_67920a8fb1ac4b::t_5bc9a957f2566f 7-20,62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "34f115a47efbed052e1d5fcb91daecc823b9c45e",
+  "prompts": {},
+  "sessions": {
+    "s_67920a8fb1ac4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28aa-1d08-7bb1-aef7-b8a67449c8e3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
