@@ -1,0 +1,19 @@
+README.md
+  s_ebc4937502d654::t_2768738e5d5333 53,143-158,290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f95cfaddbab37f50dc534099b57d78d4310ef15b",
+  "prompts": {},
+  "sessions": {
+    "s_ebc4937502d654": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2a62-19ac-74c3-9aba-425ddc42c28e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
