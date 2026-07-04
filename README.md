@@ -21,7 +21,7 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | 问题 | 做法 |
 | --- | --- |
 | MAAS 经常直接返回 `503/10310` | 在首包前串行重试，不急着把失败暴露给客户端 |
-| PI 并行对话互相挤占单账号窗口 | 本地全局 queue，默认同时只放行 1 个 generation |
+| PI 并行对话互相挤占单账号窗口 | 本地 queue 保护首包前的接入/重试阶段；stream 首包到达后释放 queue |
 | OpenAI/Anthropic 两个入口偶尔一边可用 | 失败后跨接口 fallback，但不把它们当独立 provider |
 | all-busy 后立刻重打浪费请求 | 设置短 cooldown，并向客户端返回 `Retry-After` |
 | 不知道到底失败在哪 | JSONL ledger 记录每次 attempt、排队、cooldown 和错误码 |
@@ -37,7 +37,7 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | 两个接口有弱去相关 | paired probe 20 对里 9 对只有一边失败 | 保留协议转换和跨接口 fallback |
 | 固定 rate limit 没测出来 | 压力统一暴露为 `503/10310`，没有稳定 envelope | 文档只写经验边界，不写伪精确 RPM/TPM |
 | 并行 hedging 不适合默认 | paired replay 没提高最终成功率，只固定消耗 2 次 attempts | 默认用串行重试，不无脑并发 |
-| 本地 queue 值得保留 | dogfood 中 3/4 请求排队，4/4 成功，pressure ledger 可用 | 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1` |
+| 本地 queue 值得保留，但不能锁完整 stream | dogfood 中 3/4 请求排队，4/4 成功，pressure ledger 可用 | 默认只串行化首包前窗口，不串行化整段长回复 |
 
 最重要的边界：**paired probe 的 9/20 both-fail 不是最终成功率天花板。** 它只说明“同一瞬间协议转换救不了”。串行重试、短冷却和客户端 retry 等的是后面的时间窗口，仍然可能成功。
 
@@ -47,7 +47,7 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | --- | --- |
 | OpenAI-compatible API | `POST /v1/chat/completions`、`GET /v1/models` |
 | Anthropic-compatible API | `POST /anthropic/v1/messages` |
-| 单账号全局排队 | 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1`，PI 并行对话会在本地排队 |
+| 单账号接入 queue | 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1`；stream 首包前排队，首包后释放，不锁完整长回复 |
 | 串行重试 | 默认 5 次，带 backoff 和 jitter |
 | 跨接口 fallback | OpenAI 客户端失败时可尝试 Anthropic 入口，反向也支持 |
 | Streaming 保护 | 上游 `200` 但迟迟没有首个 chunk 时，不急着把响应提交给客户端 |
@@ -68,15 +68,20 @@ MAAS_MAX_RETRY_DELAY_S=3.0
 MAAS_RETRY_JITTER_S=0.25
 MAAS_BUSY_COOLDOWN_S=1.0
 MAAS_ALL_BUSY_RETRY_AFTER_S=3
+MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2
+MAAS_ALL_BUSY_RECOVERY_DELAY_S=3.0
 MAAS_STREAM_FIRST_CHUNK_TIMEOUT_S=20
 ```
 
 | 配置 | 为什么 |
 | --- | --- |
-| `MAAS_MAX_INFLIGHT_REQUESTS=1` | 单账号下最稳。PI 并行对话会排队，而不是一起挤上游。 |
+| `MAAS_MAX_INFLIGHT_REQUESTS=1` | 单账号下保护首包前的接入/重试窗口。stream 首包后释放 queue，不会把整段长回复串行化。 |
 | `MAAS_MAX_BACKEND_ATTEMPTS=5` | 5 次已经覆盖大部分短暂 busy 窗口；7 次更慢、更重，只适合高价值调用。 |
+| `MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2` | 只在基础 5 次全部是 `503/10310` 时触发，等一小段时间后再救援 2 次，减少 PI 直接看到 503 的概率。 |
 | `MAAS_BUSY_COOLDOWN_S=1.0` | 如果一个请求所有 attempts 都是 `503/10310`，下一位请求先短暂停一下。 |
 | `MAAS_ALL_BUSY_RETRY_AFTER_S=3` | all-busy 后给客户端更明确的请求级 retry 信号。 |
+
+如果你更看重并行体感，可以把 `MAAS_MAX_INFLIGHT_REQUESTS` 设为 `2`。不要直接理解成“完整回复并发数”：对 streaming 路径，它控制的是首包前的接入/重试阶段。
 
 ## 安装
 
@@ -162,10 +167,19 @@ console 会显示每次请求、排队、attempt 和释放：
 ```text
 [maas-gateway] request start id=... surface=openai stream=true ...
 [maas-gateway] queue acquired id=... surface=openai limit=1 waited=0.0s
-[maas-gateway] attempt id=... n=1/5 interface=openai ok=false status=503 code=10310 ...
-[maas-gateway] attempt id=... n=3/5 interface=anthropic ok=true status=200 ...
+[maas-gateway] attempt id=... n=1/7 interface=openai ok=false status=503 code=10310 ...
+[maas-gateway] attempt id=... n=3/7 interface=anthropic ok=true status=200 ...
 [maas-gateway] queue release id=... surface=openai limit=1
 [maas-gateway] request end id=... ok=true attempts=3 ...
+```
+
+对 streaming 请求，`queue release` 会在首个有效 chunk 已经拿到后发生；后续长回复继续 streaming，但不会继续占住 queue。
+
+如果基础 5 次全部是 `503/10310`，会先进入内部救援轮，而不是马上把 503 抛给 PI：
+
+```text
+[maas-gateway] all-busy recovery wait id=... sleep=3.0s
+[maas-gateway] attempt id=... n=6/7 interface=openai ok=true status=200 ...
 ```
 
 如果一个请求所有后端 attempts 都是 `503/10310`，会额外看到：
@@ -179,8 +193,10 @@ ledger 不记录完整 prompt 或 API key，只记录 hash 和元数据。关键
 | 字段 | 含义 |
 | --- | --- |
 | `attempts[]` | 每次后端 attempt 的接口、状态码、错误码、耗时 |
-| `pressure.inflight_limit` | 本地单账号同时放行的客户端 generation 数 |
-| `pressure.queue_wait_s` | 等待 in-flight permit 的时间 |
+| `request_start_ts` | 请求进入 gateway 的时间，用于分析 queue/cooldown 对后续请求的影响 |
+| `pressure.inflight_limit` | 本地 queue 上限 |
+| `pressure.queue_scope` | queue 保护范围；stream 成功时通常是 `first_chunk` |
+| `pressure.queue_wait_s` | 等待 queue permit 的时间 |
 | `pressure.cooldown_wait_s` | all-busy 后被 cooldown 挡住的时间 |
 | `pressure.busy_cooldown_set_s` | 本请求是否设置了后续 cooldown |
 | `pressure.retry_after_s` | 最终失败时返回给客户端的 `Retry-After` 秒数 |
@@ -194,7 +210,7 @@ ledger 不记录完整 prompt 或 API key，只记录 hash 和元数据。关键
 | 早期 HTTP proxy route 探测 | 104 | 63/104 成功 | 没看到“换路由就稳定”的证据 |
 | 2026-07-04 温和 probe | 140 | 首次 attempt 75/140；离线 5 次预算约 88.2% | `503/10310` 呈 burst；两个入口强相关 |
 | paired direct probe | 20 对 | 11/20 至少一边成功，9/20 两边都 busy | fallback 有价值，但不是双 provider 高可用 |
-| gateway dogfood | 4 | 4/4 成功；3/4 发生本地排队 | 证明 queue 和 pressure ledger 生效，不证明成功率已解决 |
+| gateway dogfood | 4 | 4/4 成功；3/4 发生本地排队 | 证明 queue 和 pressure ledger 生效；后续代码已改为 stream 首包后释放 queue |
 
 详细材料：
 

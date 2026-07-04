@@ -72,12 +72,18 @@ class AccountPressureGate:
         console_log(f"queue release id={request_id} surface={surface} limit={self.limit}")
 
     def observe_attempts(self, request_id: str, surface: str, attempts: list[object]) -> float | None:
+        """Inspect a finished request's attempts and maybe set a cooldown.
+
+        Returns the cooldown duration if this request armed a cooldown, otherwise
+        ``None``.
+        """
         if not attempts or self.busy_cooldown_s <= 0:
             return None
         any_ok = any(bool(getattr(attempt, "ok", False)) for attempt in attempts)
         all_busy = all(str(getattr(attempt, "error_code", "")) == "10310" for attempt in attempts)
         if any_ok or not all_busy:
             return None
+
         self._cooldown_until = max(self._cooldown_until, time.perf_counter() + self.busy_cooldown_s)
         console_log(f"cooldown set id={request_id} surface={surface} sleep={self.busy_cooldown_s}s reason=all_attempts_10310")
         return self.busy_cooldown_s

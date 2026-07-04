@@ -41,7 +41,7 @@
 | balanced trace 当前 x5 | 45/55 | 这只是近似 replay，不能单独决定最终顺序 |
 | balanced trace 当前 x7 | 49/55 | 7 次多救一部分，但 p95 wall time 明显变长 |
 
-当前最强信号不是“换接口就好了”，而是：**不要让同一个账号同时跑多个长 generation；busy 后不要立即打下一枪；转换只作为弱去相关 fallback。**
+当前最强信号不是“换接口就好了”，而是：**不要让同一个账号在首包前同时发起多个接入/重试窗口；busy 后不要立即打下一枪；转换只作为弱去相关 fallback。**
 
 paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板。它只表示“同一瞬间协议转换救不了”；冷却、串行重试和客户端 retry 等的是下一个时间窗口，所以仍可能提高最终成功率。
 
@@ -79,6 +79,7 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 | 字段 | 用途 |
 | --- | --- |
 | `pressure.inflight_limit` | 当时的本地单账号并发上限 |
+| `pressure.queue_scope` | queue 保护范围；stream 成功时应为 `first_chunk` |
 | `pressure.queue_wait_s` | 用户请求在本地 queue 等了多久 |
 | `pressure.cooldown_wait_s` | 请求是否被 all-busy cooldown 延迟 |
 | `pressure.busy_cooldown_set_s` | 当前请求是否触发后续 cooldown |
@@ -107,8 +108,9 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 | 策略 | 假设 | 风险 | 实验方法 |
 | --- | --- | --- | --- |
 | 自适应接口排序 | 最近成功率更高的接口应该先试 | 过拟合短窗口噪声 | EWMA replay 已完成；当前不默认上线 |
-| 全局并发队列 | 限制账号级 in-flight 能减少 busy burst | 用户排队时间变长 | 已加 `MAAS_MAX_INFLIGHT_REQUESTS`，下一步 dogfood PI 并行对话 |
+| 首包前接入队列 | 限制首包前 in-flight 接入/重试窗口能减少 busy burst | 首包前可能排队，但长 stream 不应锁住队列 | 已改为 stream 首包后释放 queue，下一步 dogfood PI 并行对话 |
 | burst 冷却/熔断 | 两个接口连续 busy 后短暂停止能减少浪费 | 过早冷却会错过恢复窗口 | 已加入 all-busy 后 `MAAS_BUSY_COOLDOWN_S`；下一步 dogfood 0/1/2/4s |
+| all-busy 内部救援轮 | 基础 5 次全 busy 后，等 3s 再试 2 次可减少 PI 可见 503 | 更慢，且失败窗口很长时仍会失败 | 已加入 `MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2` |
 | 分层 attempts | 普通请求 5 次，高价值请求 7 次 | 用户需要知道何时高价值 | 通过 env/header 配置策略档位 |
 | delayed hedging | 首包慢时补发能降低尾延迟 | 并发压力变高 | 只对首包慢启用，设置全局 hedging budget |
 | 客户端 retry 协同 | 最终 `503/529` 后等待短 jitter 再 retry 可能比继续打满 attempts 更好 | 依赖客户端行为 | all-busy 时返回 `MAAS_ALL_BUSY_RETRY_AFTER_S`，测 PI 是否按预期 retry |
@@ -118,8 +120,8 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 | 阶段 | 动作 | 请求强度 |
 | --- | --- | --- |
 | 1. 离线 replay | 已加入 paired/trace/cooldown replay | 0 真实请求 |
-| 2. 网关 queue 原型 | 已加本地 single-account concurrency cap，不改系统代理 | 0 或少量 dogfood |
-| 3. PI dogfood | 用真实 PI 并行对话测试 queue/cooldown 的体感 | 本地排队，后端 in-flight 默认 1，cooldown 默认 1s |
+| 2. 网关 queue 原型 | 已加本地首包前 single-account cap，不改系统代理 | 0 或少量 dogfood |
+| 3. PI dogfood | 用真实 PI 并行对话测试 queue/cooldown 的体感 | 首包前 queue 默认 1；stream 首包后释放；cooldown 默认 1s |
 | 4. EWMA replay | 已完成；结果不足以默认上线 | 0 真实请求 |
 | 5. route block（可选） | direct/proxy 小块随机化，只在主策略仍不够时做 | 并发 1，短 prompt |
 | 6. 决策 | 根据 attempts_per_success 和 p95 首包时间调整默认策略 | 先文档，后代码 |
@@ -128,9 +130,22 @@ paired probe 的 9/20 both-fail 不是单账号最终成功率的绝对天花板
 
 先不要做 aggressive hedging。当前最可能提升可用性的方向是：
 
-1. **账号级全局并发队列**：已作为默认保守策略加入，减少 PI 并行对话互相把上游打 busy。
-2. **both-fail 短冷却**：已加入 all-busy 后 `MAAS_BUSY_COOLDOWN_S=1.0`，下一轮用 PI dogfood 调整。
-3. **EWMA 接口排序暂不默认**：replay 没有显示稳定优势；如果实现，只应放在功能开关后面继续 dogfood。
-4. **客户端 retry 协同**：最终错误不伪装成功；all-busy 时 `Retry-After` 默认 3 秒，让 PI 做下一轮请求级 retry。
+1. **首包前接入队列**：已作为默认保守策略加入，减少 PI 并行对话同时冲击接入/重试窗口；stream 首包后释放 queue，避免长回复阻塞其他对话。
+2. **all-busy 内部救援轮**：已加入基础 5 次全 busy 后等待再试 2 次，目标是减少 PI 直接看到 `503`。
+3. **both-fail 短冷却**：已加入 all-busy 后 `MAAS_BUSY_COOLDOWN_S=1.0`，下一轮用 PI dogfood 调整。
+4. **EWMA 接口排序暂不默认**：replay 没有显示稳定优势；如果实现，只应放在功能开关后面继续 dogfood。
+5. **客户端 retry 协同**：最终错误不伪装成功；all-busy 时 `Retry-After` 默认 3 秒，让 PI 做下一轮请求级 retry。
 
 这些都可以先用现有 ledger 做离线评估，再做小流量实测。
+
+## 已放弃：cooldown 随机对照开关
+
+曾考虑过在 all-busy 后随机跳过一半 cooldown，用随机分组对比验证因果收益。这个方案现在不进入代码：
+
+| 原因 | 判断 |
+| --- | --- |
+| 它会故意降低一半 busy 事件后的保护 | 不适合作为 PI 日常策略 |
+| 当前目标是提高可用性，不是在线牺牲流量做实验 | 不把用户真实任务当空白对照组 |
+| 已有 ledger 已能支持离线观察 gap-after-busy | 继续保留 `request_start_ts`，但不保留随机分组 |
+
+最终采用固定策略：只要一个请求所有后端 attempts 都是 `503/10310`，就设置短 cooldown；如果基础 attempts 全 busy，再进入内部救援轮。

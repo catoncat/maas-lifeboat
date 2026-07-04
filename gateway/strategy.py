@@ -12,7 +12,7 @@ import httpx
 
 from . import config
 from .errors import retryable
-from .logging import console_log_attempt
+from .logging import console_log, console_log_attempt
 from .protocols import anthropic_to_openai, normalize_model, openai_to_anthropic
 from .sse import anthropic_stream_to_openai, openai_stream_to_anthropic
 from .types import AttemptResult, Interface, PreparedStream, PreparedStreamFailure
@@ -32,6 +32,23 @@ def attempt_interfaces(native: Interface, max_attempts: int | None = None) -> li
         while len(interfaces) < limit:
             interfaces.append(alt if len(interfaces) % 2 == 0 else native)
     return interfaces[:limit]
+
+
+def planned_attempt_count(native: Interface) -> int:
+    return len(attempt_interfaces(native, config.MAX_BACKEND_ATTEMPTS + config.ALL_BUSY_RECOVERY_ATTEMPTS))
+
+
+def all_attempts_busy(attempts: list[AttemptResult]) -> bool:
+    return bool(attempts) and all(str(attempt.error_code) == "10310" for attempt in attempts)
+
+
+async def delay_before_all_busy_recovery(request_id: str | None) -> None:
+    delay = config.ALL_BUSY_RECOVERY_DELAY_S
+    if delay > 0 and config.RETRY_JITTER_S > 0:
+        delay += random.uniform(0, config.RETRY_JITTER_S)
+    if delay > 0:
+        console_log(f"all-busy recovery wait id={request_id or '-'} sleep={round(delay, 3)}s")
+        await asyncio.sleep(delay)
 
 
 async def delay_before_attempt(step_index: int, interface: Interface, previous: Interface) -> None:
@@ -115,11 +132,19 @@ class MaasGateway:
 
     async def prepare_stream_strategy(self, native: Interface, payload: dict[str, Any], request_id: str | None = None) -> PreparedStream | PreparedStreamFailure:
         attempts: list[AttemptResult] = []
-        interfaces = attempt_interfaces(native)
+        base_attempts = len(attempt_interfaces(native))
+        interfaces = attempt_interfaces(native, config.MAX_BACKEND_ATTEMPTS + config.ALL_BUSY_RECOVERY_ATTEMPTS)
         previous = native
         final: AttemptResult | None = None
         for index, interface in enumerate(interfaces):
-            await delay_before_attempt(index, interface, previous)
+            if index == base_attempts:
+                if not all_attempts_busy(attempts):
+                    break
+                await delay_before_all_busy_recovery(request_id)
+            elif index < base_attempts:
+                await delay_before_attempt(index, interface, previous)
+            else:
+                await delay_before_attempt(index - base_attempts, interface, previous)
             started = time.perf_counter()
             cm = self.client.stream(
                 "POST",
@@ -269,11 +294,19 @@ class MaasGateway:
         async def invoke(interface: Interface, body: dict[str, Any]) -> AttemptResult:
             return await (self.call_openai(body) if interface == "openai" else self.call_anthropic(body))
 
-        interfaces = attempt_interfaces(native)
+        base_attempts = len(attempt_interfaces(native))
+        interfaces = attempt_interfaces(native, config.MAX_BACKEND_ATTEMPTS + config.ALL_BUSY_RECOVERY_ATTEMPTS)
         previous = native
         final: AttemptResult | None = None
         for index, interface in enumerate(interfaces):
-            await delay_before_attempt(index, interface, previous)
+            if index == base_attempts:
+                if not all_attempts_busy(attempts):
+                    break
+                await delay_before_all_busy_recovery(request_id)
+            elif index < base_attempts:
+                await delay_before_attempt(index, interface, previous)
+            else:
+                await delay_before_attempt(index - base_attempts, interface, previous)
             body = payload if interface == native else openai_to_anthropic(payload) if native == "openai" else anthropic_to_openai(payload)
             result = await invoke(interface, body)
             attempts.append(result)

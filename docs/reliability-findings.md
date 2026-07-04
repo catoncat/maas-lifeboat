@@ -84,7 +84,7 @@ MAAS Lifeboat 不是对上游可用性的证明。它是一个本地缓冲层：
 
 没有测出稳定 RPM/TPM 阈值。provider 没有用清晰的限流 envelope 暴露边界，而是把压力统一返回成 `503/10310`。
 
-因此项目文档只写“本账号经验边界”：后端 in-flight 默认 1，温和 probe 并发不超过 2，busy 后不要立即重打。它不是官方或稳定 rate limit。
+因此项目文档只写“本账号经验边界”：首包前的接入/重试窗口默认本地 queue 为 1，温和 probe 并发不超过 2，busy 后不要立即重打。它不是官方或稳定 rate limit。
 
 ### proxy/IP 是否有效？
 
@@ -122,8 +122,9 @@ native -> native -> alternate -> native -> alternate
 
 | 策略 | 状态 | 原因 |
 | --- | --- | --- |
-| 单账号全局 queue | 默认启用 | 减少 PI 并行对话互相挤占同一账号窗口 |
-| 5 次串行重试 | 默认启用 | 在成功率和后端压力之间更平衡 |
+| 单账号接入 queue | 默认启用 | 保护首包前的接入/重试窗口；stream 首包后释放，不锁完整长回复 |
+| 5 次基础串行重试 | 默认启用 | 在成功率和后端压力之间更平衡 |
+| all-busy 内部救援轮 | 默认启用 | 基础 5 次全部 `503/10310` 时，短等后额外试 2 次，避免过早把 503 抛给 PI |
 | 跨接口 fallback | 默认启用 | 能救单边失败窗口 |
 | all-busy cooldown | 默认启用 | busy 后立刻重打效果很差 |
 | 标准可重试错误 | 默认启用 | 给 PI/Codex 这类客户端一个请求级 retry 信号 |
@@ -133,8 +134,8 @@ native -> native -> alternate -> native -> alternate
 
 ## 运维建议
 
-1. 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1`，让并行 PI 对话在本地排队。
-2. 默认 `MAAS_MAX_BACKEND_ATTEMPTS=5`，不要无脑拉到 7。
+1. 默认 `MAAS_MAX_INFLIGHT_REQUESTS=1`，只串行化首包前的接入/重试窗口；stream 首包后释放 queue。
+2. 默认 `MAAS_MAX_BACKEND_ATTEMPTS=5`，并保留 `MAAS_ALL_BUSY_RECOVERY_ATTEMPTS=2` 作为只在失败边缘触发的救援轮。
 3. 保持 `MAAS_ENABLE_CROSS_INTERFACE_FALLBACK=1`。
 4. 保持 `MAAS_BUSY_COOLDOWN_S=1.0`，all-busy 后短暂停顿。
 5. 看 `logs/gateway_requests.jsonl`，不要只看客户端是否成功。

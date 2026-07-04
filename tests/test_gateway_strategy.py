@@ -17,6 +17,7 @@ from gateway.sse import anthropic_stream_to_openai
 from gateway.strategy import MaasGateway, attempt_interfaces
 from gateway.types import (
     AttemptResult,
+    PreparedStream,
     PreparedStreamFailure,
 )
 
@@ -236,6 +237,33 @@ def test_default_attempt_plan_is_warm_five_step_fallback(monkeypatch):
     assert attempt_interfaces("anthropic") == ["anthropic", "anthropic", "openai", "anthropic", "openai"]
 
 
+def test_strategy_uses_all_busy_recovery_before_returning_503(monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    monkeypatch.setattr(config, "MAX_BACKEND_ATTEMPTS", 5)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_ATTEMPTS", 2)
+    monkeypatch.setattr(config, "ALL_BUSY_RECOVERY_DELAY_S", 0)
+    monkeypatch.setattr(config, "SAME_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(config, "ALT_RETRY_DELAY_S", 0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if len(calls) <= 5:
+            return httpx.Response(503, json={"error": {"code": 10310, "message": "busy", "type": "server_error"}})
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}], "id": "msg1", "model": "m", "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.test") as client:
+            gateway = MaasGateway(client)
+            final, attempts = await gateway.run_strategy("openai", {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 8})
+            return final, attempts
+
+    final, attempts = run(scenario())
+    assert final.ok
+    assert len(attempts) == 6
+    assert [a.interface for a in attempts] == ["openai", "openai", "anthropic", "openai", "anthropic", "openai"]
+
+
 def test_account_pressure_gate_serializes_requests():
     async def scenario():
         gate = AccountPressureGate(1)
@@ -270,6 +298,17 @@ def test_account_pressure_gate_cools_down_after_all_busy():
             permit.release()
 
     run(scenario())
+
+
+def test_pressure_gate_non_busy_returns_none():
+    gate = AccountPressureGate(1, busy_cooldown_s=0.5)
+    # A successful attempt should not trigger any arm.
+    cooldown_set_s = gate.observe_attempts(
+        "req-1",
+        "openai",
+        [AttemptResult("openai", True, 200, 0.1)],
+    )
+    assert cooldown_set_s is None
 
 
 def test_stream_retries_before_first_chunk(monkeypatch):
@@ -488,9 +527,77 @@ def test_stream_route_returns_retryable_http_error_before_first_chunk(monkeypatc
 
     rows = [json.loads(line) for line in config.LEDGER.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 1
+    assert rows[0]["request_start_ts"]
     pressure = rows[0]["pressure"]
     assert pressure["inflight_limit"] == 1
     assert pressure["busy_cooldown_set_s"] == 1.0
     assert pressure["retry_after_s"] == 3
     assert pressure["queue_wait_s"] >= 0
     assert pressure["cooldown_wait_s"] == 0
+
+
+def test_stream_route_releases_queue_after_first_chunk(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "API_KEY", "provider-key:secret")
+    monkeypatch.setattr(config, "CLIENT_API_KEY", "client-key")
+    monkeypatch.setattr(config, "LEDGER", tmp_path / "gateway_requests.jsonl")
+    monkeypatch.setattr(config, "BUSY_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(config, "MAX_INFLIGHT_REQUESTS", 1)
+
+    async def scenario():
+        first_prepare_done = asyncio.Event()
+        second_prepare_started = asyncio.Event()
+        calls = 0
+
+        async def fake_prepare(self, native, payload, request_id=None):
+            nonlocal calls
+            calls += 1
+            call_no = calls
+            if call_no == 1:
+                first_prepare_done.set()
+            if call_no == 2:
+                second_prepare_started.set()
+
+            async def chunks():
+                yield b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n'
+                if call_no == 1:
+                    await second_prepare_started.wait()
+                yield b"data: [DONE]\n\n"
+
+            return PreparedStream(
+                interface="openai",
+                chunks=chunks(),
+                attempts=[AttemptResult("openai", True, 200, 0.01)],
+                total_attempts=1,
+            )
+
+        monkeypatch.setattr(MaasGateway, "prepare_stream_strategy", fake_prepare)
+        app = make_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            first = asyncio.create_task(
+                client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer client-key"},
+                    json={"model": "astron-code-latest", "stream": True, "messages": [{"role": "user", "content": "one"}]},
+                )
+            )
+            await asyncio.wait_for(first_prepare_done.wait(), timeout=0.5)
+            second = asyncio.create_task(
+                client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer client-key"},
+                    json={"model": "astron-code-latest", "stream": True, "messages": [{"role": "user", "content": "two"}]},
+                )
+            )
+            await asyncio.wait_for(second_prepare_started.wait(), timeout=0.5)
+            first_response, second_response = await asyncio.gather(first, second)
+
+        assert first_response.status_code == 200
+        assert second_response.status_code == 200
+        assert calls == 2
+        rows = [json.loads(line) for line in config.LEDGER.read_text(encoding="utf-8").splitlines()]
+        assert len(rows) == 2
+        assert all(row["request_start_ts"] for row in rows)
+        assert {row["pressure"]["queue_scope"] for row in rows} == {"first_chunk"}
+
+    run(scenario())
