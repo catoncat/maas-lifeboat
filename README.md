@@ -2,6 +2,8 @@
 
 中文 | [English](README.en.md)
 
+![MAAS Lifeboat 四格漫画](assets/readme-banner/maas-lifeboat-refunded-comic.png)
+
 MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding provider 之间。
 
 它暴露 OpenAI/Anthropic-compatible API，内部做单账号排队、串行重试、跨接口 fallback、模型 fallback、短冷却和结构化日志，用来缓解上游频繁返回 `503` / `10310 system busy` 的问题。
@@ -305,6 +307,8 @@ python3 -m compileall -q gateway experiments
 ```
 
 ## 当前限制
+
+![MAAS Lifeboat 墓碑](assets/readme-banner/maas-lifeboat-refunded-tombstone-bw.png)
 
 - 上游 stream 已经给客户端发出 chunk 后，不能无损切换到另一个 completion。
 - streaming 转换覆盖 text、tool-call 和 thinking delta；复杂 multimodal streaming 未覆盖。
