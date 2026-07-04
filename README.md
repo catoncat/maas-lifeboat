@@ -1,7 +1,5 @@
 # MAAS Lifeboat
 
-![MAAS Lifeboat four-panel banner](assets/readme-banner/maas-gateway-four-panel-comic.png)
-
 中文 | [English](README.en.md)
 
 MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding provider 之间。
@@ -52,6 +50,7 @@ MAAS Lifeboat 是一层本地救生网关，放在你的客户端和 MAAS coding
 | 跨接口 fallback | OpenAI 客户端失败时可尝试 Anthropic 入口，反向也支持 |
 | Streaming 保护 | 上游 `200` 但迟迟没有首个 chunk 时，不急着把响应提交给客户端 |
 | 工具调用转换 | 支持 OpenAI `tool_calls` 和 Anthropic `tool_use` 的双向转换 |
+| 思考参数转换 | 跨接口 fallback 时保留 `options.enable_thinking`、`thinking`；`thinking` block 和 `reasoning_content` 支持双向转换 |
 | 可复算日志 | JSONL ledger 记录每次 attempt、queue/cooldown、Retry-After，不记录完整 prompt 或 key |
 | request-level proxy | 可配置代理，但不修改系统代理，不影响其他应用 |
 
@@ -140,6 +139,22 @@ PI agents provider 示例：
 ```
 
 默认模型元数据按当前观测的 GLM 5.2 / Astron Code 设置：500k context window，131072 max output tokens。若 provider 调整限制，可用 `MAAS_CONTEXT_WINDOW` 和 `MAAS_MAX_TOKENS` 覆盖。
+
+如果客户端支持请求覆盖，可以为 `astron-code-latest` 加上思考参数。gateway 会在 OpenAI/Anthropic fallback 转换时保留这些字段：
+
+```json
+{
+  "options": {
+    "enable_thinking": true
+  },
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 64000
+  }
+}
+```
+
+非流式响应里，Anthropic `thinking` block 会映射为 OpenAI-compatible `message.reasoning_content`；反向也会从 `reasoning_content` 映射回 Anthropic `thinking` block。流式响应里，对应映射为 `delta.reasoning_content` 和 Anthropic `thinking_delta`。
 
 ## macOS 用户服务
 
@@ -272,6 +287,6 @@ python3 -m compileall -q gateway experiments
 ## 当前限制
 
 - 上游 stream 已经给客户端发出 chunk 后，不能无损切换到另一个 completion。
-- streaming 转换覆盖 text 和 tool-call delta；复杂 multimodal streaming 未覆盖。
+- streaming 转换覆盖 text、tool-call 和 thinking delta；复杂 multimodal streaming 未覆盖。
 - 成功率最终受上游容量限制。gateway 能改善瞬时失败处理，但不能修复账号级或 provider-wide 饱和。
 - route/proxy 只作为 request-level 实验变量；当前证据不能证明换 IP 会稳定修复 `503/10310`。
