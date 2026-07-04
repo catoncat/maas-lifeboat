@@ -1,0 +1,26 @@
+gateway/protocols.py
+  s_ebc4937502d654::t_dfe5da9b1b6ac1 154-178,259,322,328,333-334,345-346,374-376
+tests/test_gateway_strategy.py
+  s_ebc4937502d654::t_e40c2f1eae093e 16,62-125
+  s_ebc4937502d654::t_bbacdd71d6336a 267-321
+  s_ebc4937502d654::t_ce345c3a2c25ef 353-384
+  s_ebc4937502d654::t_2649a0ee5b6214 126-127
+gateway/sse.py
+  s_ebc4937502d654::t_c33b6d088c75df 33-47,104-107,138-141,179,213-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cbc44daf154f018cea4b921644db55da6cb765f0",
+  "prompts": {},
+  "sessions": {
+    "s_ebc4937502d654": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2a62-19ac-74c3-9aba-425ddc42c28e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "cat <git@chen.rs>"
+    }
+  }
+}
